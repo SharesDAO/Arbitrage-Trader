@@ -60,7 +60,7 @@ class StockTrader:
         request_xch = self.volume * self.current_price / xch_price
         self.profit = request_xch / self.total_cost - 1
         if self.profit >= MIN_PROFIT:
-            if not send_asset(STOCKS[self.stock]["sell_addr"], STOCKS[self.stock]["wallet_id"], request_xch,
+            if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
                               self.volume, self.logger):
                 # Failed to send order
                 return
