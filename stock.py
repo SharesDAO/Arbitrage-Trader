@@ -1,8 +1,8 @@
 import requests
 from cachetools import TTLCache, cached
 
-cache = TTLCache(maxsize=100, ttl=1)
-clock = TTLCache(maxsize=1, ttl=1)
+cache = TTLCache(maxsize=100, ttl=60)
+clock = TTLCache(maxsize=1, ttl=60)
 
 
 @cached(clock)

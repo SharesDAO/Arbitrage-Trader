@@ -51,6 +51,7 @@ class StockTrader:
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
         self.position_status = PositionStatus.PENDING_BUY.name
         self.buy_count += 1
+        self.last_updated = datetime.now()
         record_trade(self.stock, "BUY", price, volume, 0)
         self.logger.info(f"Bought {volume} shares of {self.stock} at ${price}")
 

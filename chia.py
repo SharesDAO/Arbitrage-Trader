@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 
@@ -31,16 +32,27 @@ def check_pending_position(stock):
     if stock.position_status == PositionStatus.PENDING_BUY.name:
         expect_amount = stock.volume
         wallet_name = stock.stock
+        result = subprocess.check_output([CHIA_PATH, "wallet", "show", f"--fingerprint={WALLET_FINGERPRINT}"]).decode(
+            "utf-8").split("\n")
+        for l in range(len(result)):
+            if result[l].find(wallet_name) >= 0:
+                amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
+                if amount - expect_amount >= -0.001:
+                    return True
     else:
-        expect_amount = stock.total_cost
-        wallet_name = "Chia Wallet"
-    result = subprocess.check_output([CHIA_PATH, "wallet", "show", f"--fingerprint={WALLET_FINGERPRINT}"]).decode(
-        "utf-8").split("\n")
-    for l in range(len(result)):
-        if result[l].find(wallet_name) >= 0:
-            amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
-            if amount - expect_amount >= -0.001:
-                return True
+        result = subprocess.check_output([CHIA_PATH, "wallet", "get_transactions", f"--fingerprint={WALLET_FINGERPRINT}", "--id=1", "--verbose", "--no-paginate", "--limit=50", "--sort-by-height", "--reverse"]).decode("utf-8").split("\n")
+        for l in range(len(result)):
+            if result[l].find("'memos':") >= 0:
+                match = re.search(r"^.*\['0x([a-z0-9]+?)'].*$", result[l + 1])
+                if match is None:
+                    continue
+                memo = match.group(1)
+                decoded_string = bytes.fromhex(memo).decode('utf-8')
+                response = json.loads(decoded_string)
+                if "symbol" in response and response["symbol"] == stock.stock:
+                    if "order_id" in response and response["order_id"] > str(stock.last_update.timestamp()):
+                        # The order is created after the last update
+                        return True
     return False
 
 
