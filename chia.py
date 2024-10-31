@@ -40,19 +40,25 @@ def check_pending_position(stock):
                 if amount - expect_amount >= -0.001:
                     return True
     else:
-        result = subprocess.check_output([CHIA_PATH, "wallet", "get_transactions", f"--fingerprint={WALLET_FINGERPRINT}", "--id=1", "--verbose", "--no-paginate", "--limit=50", "--sort-by-height", "--reverse"]).decode("utf-8").split("\n")
-        for l in range(len(result)):
-            if result[l].find("'memos':") >= 0:
-                match = re.search(r"^.*\['0x([a-z0-9]+?)'].*$", result[l + 1])
-                if match is None:
+        request = '{"wallet_id":1, "reverse": true}'
+        result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
+        txs = json.loads(result)["transactions"]
+        for tx in txs:
+            if tx["sent"] == 0:
+                request = '{"transaction_id": "'+tx["name"]+'"}'
+                try:
+                    memo = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transaction_memo", request]).decode(
+                    "utf-8")
+                    memo = json.loads(memo)
+                    decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][0]).decode('utf-8')
+                    response = json.loads(decoded_string)
+                    if "symbol" in response and response["symbol"] == stock.stock:
+                        if "order_id" in response and response["order_id"] > str(stock.last_updated.timestamp()):
+                            # The order is created after the last update
+                            return True
+                except Exception as e:
                     continue
-                memo = match.group(1)
-                decoded_string = bytes.fromhex(memo).decode('utf-8')
-                response = json.loads(decoded_string)
-                if "symbol" in response and response["symbol"] == stock.stock:
-                    if "order_id" in response and response["order_id"] > str(stock.last_update.timestamp()):
-                        # The order is created after the last update
-                        return True
+
     return False
 
 
