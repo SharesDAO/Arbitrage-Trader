@@ -14,6 +14,7 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS trades (
                     action TEXT,
                     price REAL,
                     volume INTEGER,
+                    crypto_cost REAL,
                     profit REAL,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
 
@@ -37,7 +38,7 @@ def update_position(self):
     cursor.execute('''INSERT OR REPLACE INTO positions (stock, buy_count, last_buy_price, volume, total_cost, avg_price, current_price, profit, status, last_updated)
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                    (self.stock, self.buy_count, self.last_buy_price, self.volume, self.total_cost, self.avg_price,
-                    self.current_price, self.profit, self.position_status, datetime.now()))
+                    self.current_price, self.profit, self.position_status, self.last_updated))
     conn.commit()
 
 
@@ -58,8 +59,20 @@ def create_position(self):
     conn.commit()
 
 
-def record_trade(stock, action, price, volume, profit):
-    cursor.execute('''INSERT INTO trades (stock, action, price, volume, profit) 
-                          VALUES (?, ?, ?, ?, ?)''',
-                   (stock, action, price, volume, profit))
+def record_trade(stock, action, price, volume, crypto_cost, profit):
+    cursor.execute('''INSERT INTO trades (stock, action, price, volume, crypto_cost, profit) 
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                   (stock, action, price, volume, crypto_cost, profit))
+    conn.commit()
+
+def get_last_trade(stock, num):
+    # Return the recent trade for the stock
+    cursor.execute('''SELECT id, stock, action, price, volume, crypto_cost, profit FROM trades WHERE stock = ? ORDER BY timestamp DESC LIMIT ?''',
+                   (stock, num))
+    result = cursor.fetchone()
+    return result
+
+def delete_trade(trade_id):
+    cursor.execute('''DELETE FROM trades WHERE id = ?''',
+                   (trade_id,))
     conn.commit()
