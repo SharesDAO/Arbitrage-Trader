@@ -116,26 +116,17 @@ def execute_trading(logger):
                     if trader.position_status == PositionStatus.TRADABLE.name:
                         trader.handle_price_drop(xch_price)  # Handle price drop and repurchase logic
             else:
-                # Check if the position is still pending
                 trader.current_price = float(get_stock_price_from_dinari(trader.stock)[1])
-                last_trade_date = trader.last_updated.timestamp()
                 if trader.total_cost > 0:
                     trader.profit = trader.volume * trader.current_price / xch_price / trader.total_cost - 1
-                if check_pending_position(trader):
-                    logger.info(f"Position for {trader.stock} is confirmed.")
-                    trader.position_status = PositionStatus.TRADABLE.name
-                elif time.time() - last_trade_date > MAX_PENDING_DAYS * 24 * 60 * 60:
-                    # If a transaction is pending too long, we need to cancel it.
-                    logger.info(f"Position for {trader.stock} is pending for too long, canceling...")
-                    last_trade = get_last_trade(trader.stock, 2)
-                    #if trader.position_status != PositionStatus.PENDING_CANCEL.name:
-                        #trader.cancel_tx(last_trade, xch_price)
 
             # log stock current price, acg price, and profit
             logger.info(
                 f"{trader.stock}: Current Price: {trader.current_price / xch_price} XCH, Average Price: {trader.avg_price} XCH, Profit: {trader.profit * 100:.2f}%, Value: {trader.volume * trader.current_price} status: {trader.position_status}")
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
+        # Check if the positions are still pending
+        check_pending_positions(traders)
         # Get XCH balance
         xch_balance = get_xch_balance()
         total_xch = xch_balance + stock_balance / xch_price

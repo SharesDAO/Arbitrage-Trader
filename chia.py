@@ -5,7 +5,8 @@ import subprocess
 import requests
 
 from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, STOCKS, WALLET_FINGERPRINT
-
+last_checked_tx = None
+tx_cache = TTLCache(maxsize=1, ttl=10)
 
 def send_asset(address: str, wallet_id: int, request: float, offer: float, logger):
     if wallet_id == 1:
@@ -27,8 +28,23 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
         return False
 
+def get_chia_txs():
+    request = '{"wallet_id":1, "reverse": true}'
+    result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
+    txs = json.loads(result)["transactions"]
+    if last_checked_tx is not None:
+        filtered_txs = []
+        for tx in txs:
+            if tx["name"] != last_checked_tx:
+                filtered_txs.append(tx)
+            else:
+                break
+        txs = filtered_txs
+    if len(txs) > 0:
+        last_checked_tx = txs[0]["name"]
+    return txs
 
-def check_pending_position(stock):
+def check_pending_positions(traders):
     if stock.position_status == PositionStatus.PENDING_BUY.name:
         expect_amount = stock.volume
         wallet_name = stock.stock
@@ -40,9 +56,7 @@ def check_pending_position(stock):
                 if amount - expect_amount >= -0.001:
                     return True
     else:
-        request = '{"wallet_id":1, "reverse": true}'
-        result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
-        txs = json.loads(result)["transactions"]
+        txs = get_chia_txs()
         for tx in txs:
             if tx["sent"] == 0:
                 request = '{"transaction_id": "'+tx["name"]+'"}'

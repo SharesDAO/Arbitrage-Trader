@@ -25,8 +25,6 @@ MIN_PROFIT = 0.01
 DCA_PERCENTAGE = 0.05
 # How much XCH you invested
 INVESTED_XCH = 123
-# Pending transaction will be canceled after this days
-MAX_PENDING_DAYS = 7
 # Symbols you want to trade
 TRADING_SYMBOLS = ["AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "TSLA", "META", "PYPL", "RDDT", "COIN", "GBTC", "AMD",
                    "MCD", ]
