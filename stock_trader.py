@@ -3,9 +3,9 @@ from datetime import datetime
 
 from chia import get_xch_price, send_asset, check_pending_position, get_xch_balance, add_token
 from constant import BUY_VOLUME, MIN_PROFIT, STOCKS, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
-    TRADING_SYMBOLS
+    TRADING_SYMBOLS, MAX_PENDING_DAYS
 
-from db import cursor, conn, get_position, update_position, create_position, record_trade
+from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
 from stock import is_market_open, get_stock_price_from_dinari
 
 
@@ -32,7 +32,9 @@ class StockTrader:
         result = get_position(self.stock)
         self.logger.info(f"Loaded position for {self.stock}: {result}")
         if result:
+            date_format = "%Y-%m-%d %H:%M:%S"
             self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated = result
+            self.last_updated = datetime.strptime(self.last_updated.split(".")[0], date_format)
         else:
             create_position(self)
 
@@ -52,7 +54,7 @@ class StockTrader:
         self.position_status = PositionStatus.PENDING_BUY.name
         self.buy_count += 1
         self.last_updated = datetime.now()
-        record_trade(self.stock, "BUY", price, volume, 0)
+        record_trade(self.stock, "BUY", price, volume, xch_volume, 0)
         self.logger.info(f"Bought {volume} shares of {self.stock} at ${price}")
 
     def sell_stock(self, xch_price):
@@ -65,7 +67,7 @@ class StockTrader:
                               self.volume, self.logger):
                 # Failed to send order
                 return
-            record_trade(self.stock, "SELL", self.current_price, self.volume, self.profit)
+            record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
             self.logger.info(
                 f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit")
             self.position_status = PositionStatus.PENDING_SELL.name
@@ -85,6 +87,16 @@ class StockTrader:
         if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
             self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
+    def cancel_tx(self, last_trade, xch_price):
+        self.position_status = PositionStatus.PENDING_CANCEL.name
+        if last_trade[2] == 'BUY':
+            # Rollback position changes
+            self.volume -= last_trade[4]
+            # self.last_buy_price = price
+            # self.total_cost = xch_volume
+            # self.avg_price = self.total_cost / self.volume
+            # self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
+            # self.buy_count -= 1
 
 
 def execute_trading(logger):
@@ -106,11 +118,19 @@ def execute_trading(logger):
             else:
                 # Check if the position is still pending
                 trader.current_price = float(get_stock_price_from_dinari(trader.stock)[1])
+                last_trade_date = trader.last_updated.timestamp()
                 if trader.total_cost > 0:
                     trader.profit = trader.volume * trader.current_price / xch_price / trader.total_cost - 1
                 if check_pending_position(trader):
                     logger.info(f"Position for {trader.stock} is confirmed.")
                     trader.position_status = PositionStatus.TRADABLE.name
+                elif time.time() - last_trade_date > MAX_PENDING_DAYS * 24 * 60 * 60:
+                    # If a transaction is pending too long, we need to cancel it.
+                    logger.info(f"Position for {trader.stock} is pending for too long, canceling...")
+                    last_trade = get_last_trade(trader.stock, 2)
+                    #if trader.position_status != PositionStatus.PENDING_CANCEL.name:
+                        #trader.cancel_tx(last_trade, xch_price)
+
             # log stock current price, acg price, and profit
             logger.info(
                 f"{trader.stock}: Current Price: {trader.current_price / xch_price} XCH, Average Price: {trader.avg_price} XCH, Profit: {trader.profit * 100:.2f}%, Value: {trader.volume * trader.current_price} status: {trader.position_status}")

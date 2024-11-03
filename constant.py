@@ -5,6 +5,7 @@ class PositionStatus(Enum):
     TRADABLE = 1
     PENDING_BUY = 2
     PENDING_SELL = 3
+    PENDING_CANCEL = 4
 
 
 # For each buy how many XCH you want to spend
@@ -23,7 +24,9 @@ MIN_PROFIT = 0.01
 # Repurchase the stock if the (last buy price - current price) / last buy price is less than this
 DCA_PERCENTAGE = 0.05
 # How much XCH you invested
-INVESTED_XCH = 85
+INVESTED_XCH = 123
+# Pending transaction will be canceled after this days
+MAX_PENDING_DAYS = 7
 # Symbols you want to trade
 TRADING_SYMBOLS = ["AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "TSLA", "META", "PYPL", "RDDT", "COIN", "GBTC", "AMD",
                    "MCD", ]
