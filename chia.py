@@ -1,12 +1,15 @@
+import datetime
 import json
 import re
 import subprocess
-
+from datetime import datetime
 import requests
-
+from cachetools import TTLCache, cached
 from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, STOCKS, WALLET_FINGERPRINT
+from db import update_position, get_last_trade, delete_trade
+
+coin_cache = TTLCache(maxsize=100, ttl=600)
 last_checked_tx = None
-tx_cache = TTLCache(maxsize=1, ttl=10)
 
 def send_asset(address: str, wallet_id: int, request: float, offer: float, logger):
     if wallet_id == 1:
@@ -29,6 +32,7 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         return False
 
 def get_chia_txs():
+    global last_checked_tx
     request = '{"wallet_id":1, "reverse": true}'
     result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
     txs = json.loads(result)["transactions"]
@@ -44,32 +48,83 @@ def get_chia_txs():
         last_checked_tx = txs[0]["name"]
     return txs
 
-def check_pending_positions(traders):
-    if stock.position_status == PositionStatus.PENDING_BUY.name:
-        expect_amount = stock.volume
-        wallet_name = stock.stock
-        result = subprocess.check_output([CHIA_PATH, "wallet", "show", f"--fingerprint={WALLET_FINGERPRINT}"]).decode(
-            "utf-8").split("\n")
-        for l in range(len(result)):
-            if result[l].find(wallet_name) >= 0:
-                amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
-                if amount - expect_amount >= -0.001:
-                    return True
-    else:
-        txs = get_chia_txs()
+def check_pending_positions(traders, logger):
+    logger.debug("Checking pending positions")
+    txs = get_chia_txs()
+    balance_result = subprocess.check_output([CHIA_PATH, "wallet", "show", f"--fingerprint={WALLET_FINGERPRINT}"]).decode(
+        "utf-8").split("\n")
+    logger.debug(f"Found {len(balance_result)} wallets")
+    for trader in traders:
+        logger.debug(f"Checking {trader.stock} trader")
+        if trader.position_status == PositionStatus.PENDING_BUY.name:
+            # Check if the pending buy is confirmed
+            expect_amount = trader.volume
+            wallet_name = trader.stock
+            for l in range(len(balance_result)):
+                if balance_result[l].find(wallet_name) >= 0:
+                    amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", balance_result[l + 3]).group(1))
+                    if amount - expect_amount >= -0.001:
+                        trader.position_status = PositionStatus.TRADABLE.name
+                        update_position(trader)
+                        logger.info(f"Buy {trader.stock} confirmed")
+                        continue
+        # Check if pending sell is confirmed or the order is cancelled
         for tx in txs:
             if tx["sent"] == 0:
                 request = '{"transaction_id": "'+tx["name"]+'"}'
                 try:
-                    memo = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transaction_memo", request]).decode(
+                    # Check if the order is cancelled
+
+                    t = datetime.now()
+                    coin_info = get_coin_info(tx["additions"][0]["parent_coin_info"], logger)
+                    logger.debug(f"Get coin info for {trader.stock}, spent {datetime.now().timestamp()-t.timestamp()}")
+                    if STOCKS[trader.stock]["buy_addr"] == coin_info["coin"]["receiver"]["address"] and trader.position_status == PositionStatus.PENDING_BUY.name:
+                        last_trade = get_last_trade(trader.stock)
+                        trader.volume -= last_trade[4]
+                        trader.total_cost -= last_trade[5]
+                        trader.position_status = PositionStatus.TRADABLE.name
+                        trader.buy_count -= 1
+                        trader.last_updated = datetime.now()
+                        update_position(trader)
+                        delete_trade(last_trade[0])
+                        last_trade = get_last_trade(trader.stock)
+                        if last_trade is None or last_trade[2] == 'SELL':
+                            trader.last_buy_price = 0
+                            trader.avg_price = 0
+                            trader.volume = 0
+                            trader.total_cost = 0
+                        else:
+                            trader.avg_price = trader.total_cost / trader.volume
+                            trader.last_buy_price = last_trade[3]
+                        update_position(trader)
+                        logger.info(f"Buy {trader.stock} cancelled")
+                        break
+                    if STOCKS[trader.stock]["sell_addr"] == coin_info["coin"]["receiver"]["address"] and trader.position_status == PositionStatus.PENDING_SELL.name:
+                        trader.position_status = PositionStatus.TRADABLE.name
+                        trader.last_updated = datetime.now()
+                        update_position(trader)
+                        logger.info(f"Sell {trader.stock} cancelled")
+                        break
+                    memo = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transaction_memo", request],stderr=subprocess.DEVNULL).decode(
                     "utf-8")
                     memo = json.loads(memo)
                     decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][0]).decode('utf-8')
                     response = json.loads(decoded_string)
-                    if "symbol" in response and response["symbol"] == stock.stock:
-                        if "order_id" in response and response["order_id"] > str(stock.last_updated.timestamp()):
+                    if "symbol" in response and response["symbol"] == trader.stock:
+                        if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp()):
                             # The order is created after the last update
-                            return True
+                            trader.position_status = PositionStatus.TRADABLE.name
+                            trader.volume = 0
+                            trader.buy_count = 0
+                            trader.last_buy_price = 0
+                            trader.total_cost = 0
+                            trader.avg_price = 0
+                            trader.current_price = 0
+                            trader.profit = 0
+                            trader.last_updated = datetime.now()
+                            update_position(trader)
+                            logger.info(f"Sell {trader.stock} confirmed")
+                            break
                 except Exception as e:
                     continue
 
@@ -103,6 +158,17 @@ def get_xch_price(logger):
 
     if response.status_code == 200:
         return response.json()["XCH"]
+    else:
+        logger.error(f"Error: {response.status_code}")
+        return None
+
+@cached(coin_cache)
+def get_coin_info(coin_id, logger):
+    url = f"https://api-fin.spacescan.io/coin/info/{coin_id}?version=0.1.0&network=mainnet"
+    response = requests.get(url)
+
+    if response.status_code == 200:
+        return response.json()
     else:
         logger.error(f"Error: {response.status_code}")
         return None

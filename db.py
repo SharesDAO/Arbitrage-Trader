@@ -65,10 +65,10 @@ def record_trade(stock, action, price, volume, crypto_cost, profit):
                    (stock, action, price, volume, crypto_cost, profit))
     conn.commit()
 
-def get_last_trade(stock, num):
+def get_last_trade(stock):
     # Return the recent trade for the stock
-    cursor.execute('''SELECT id, stock, action, price, volume, crypto_cost, profit FROM trades WHERE stock = ? ORDER BY timestamp DESC LIMIT ?''',
-                   (stock, num))
+    cursor.execute('''SELECT id, stock, action, price, volume, crypto_cost, profit FROM trades WHERE stock = ? ORDER BY timestamp DESC LIMIT 1''',
+                   (stock,))
     result = cursor.fetchone()
     return result
 

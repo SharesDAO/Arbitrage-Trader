@@ -1,9 +1,9 @@
 import time
 from datetime import datetime
 
-from chia import get_xch_price, send_asset, check_pending_position, get_xch_balance, add_token
+from chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
 from constant import BUY_VOLUME, MIN_PROFIT, STOCKS, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
-    TRADING_SYMBOLS, MAX_PENDING_DAYS
+    TRADING_SYMBOLS
 
 from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
 from stock import is_market_open, get_stock_price_from_dinari
@@ -71,13 +71,6 @@ class StockTrader:
             self.logger.info(
                 f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit")
             self.position_status = PositionStatus.PENDING_SELL.name
-            self.volume = 0
-            self.buy_count = 0
-            self.last_buy_price = 0
-            self.total_cost = 0
-            self.avg_price = 0
-            self.current_price = 0
-            self.profit = 0
             self.last_updated = datetime.now()
 
     def handle_price_drop(self, xch_price):
@@ -87,16 +80,7 @@ class StockTrader:
         if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
             self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
-    def cancel_tx(self, last_trade, xch_price):
-        self.position_status = PositionStatus.PENDING_CANCEL.name
-        if last_trade[2] == 'BUY':
-            # Rollback position changes
-            self.volume -= last_trade[4]
-            # self.last_buy_price = price
-            # self.total_cost = xch_volume
-            # self.avg_price = self.total_cost / self.volume
-            # self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
-            # self.buy_count -= 1
+
 
 
 def execute_trading(logger):
@@ -126,7 +110,7 @@ def execute_trading(logger):
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
         # Check if the positions are still pending
-        check_pending_positions(traders)
+        check_pending_positions(traders, logger)
         # Get XCH balance
         xch_balance = get_xch_balance()
         total_xch = xch_balance + stock_balance / xch_price
