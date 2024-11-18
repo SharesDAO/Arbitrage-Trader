@@ -76,7 +76,10 @@ class StockTrader:
     def handle_price_drop(self, xch_price):
         self.current_price = float(get_stock_price_from_dinari(self.stock)[1])
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
-        drop_percentage = (self.last_buy_price - self.current_price) / self.last_buy_price
+        last_trade = get_last_trade(self.stock)
+        last_price = last_trade[5]/last_trade[4]
+        drop_percentage = (last_price -  self.current_price/xch_price) / last_price
+        self.logger.debug(f"Previous price: {last_price}, Current price: {xch_price / self.current_price}, Drop percentage: {drop_percentage * 100:.2f}%")
         if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
             self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
@@ -106,7 +109,7 @@ def execute_trading(logger):
 
             # log stock current price, acg price, and profit
             logger.info(
-                f"{trader.stock}: Current Price: {trader.current_price / xch_price} XCH, Average Price: {trader.avg_price} XCH, Profit: {trader.profit * 100:.2f}%, Value: {trader.volume * trader.current_price} status: {trader.position_status}")
+                f"{trader.stock}: Current Price: {trader.current_price / xch_price} XCH, Average Price: {trader.avg_price} XCH, Profit: {trader.profit * 100:.2f}%, Bought Count: {trader.buy_count}, Value: {trader.volume * trader.current_price} status: {trader.position_status}")
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
         # Check if the positions are still pending
