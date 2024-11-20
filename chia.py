@@ -64,8 +64,9 @@ def check_pending_positions(traders, logger):
             for l in range(len(balance_result)):
                 if balance_result[l].find(wallet_name) >= 0:
                     amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", balance_result[l + 3]).group(1))
-                    if amount - expect_amount >= -0.001:
+                    if amount - expect_amount >= -0.003:
                         trader.position_status = PositionStatus.TRADABLE.name
+                        trader.volume = amount
                         update_position(trader)
                         logger.info(f"Buy {trader.stock} confirmed")
                         continue
