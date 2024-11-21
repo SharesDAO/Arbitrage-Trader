@@ -5,6 +5,25 @@ cache = TTLCache(maxsize=100, ttl=60)
 clock = TTLCache(maxsize=1, ttl=60)
 
 
+def fetch_token_infos():
+    url = "https://api.sbt.dinari.com/api/v1/chain/42161/token_infos"
+    response = requests.get(url)
+
+    if response.status_code == 200:
+        return response.json()
+    else:
+        response.raise_for_status()
+
+
+# Get stock info
+stock_ids = {}
+token_infos = fetch_token_infos()
+for token_info in token_infos:
+    stock = token_info.get('stock', {})
+    stock_id = stock.get('id')
+    stock_ids[stock.get('symbol')] = stock_id
+
+
 @cached(clock)
 def is_market_open() -> bool:
     url = "https://www.sharesdao.com:8443/util/market_status"
@@ -17,29 +36,10 @@ def is_market_open() -> bool:
         raise Exception(f"Failed to get market status: {response.text}")
 
 
-def fetch_token_infos():
-    url = "https://api.sbt.dinari.com/api/v1/chain/42161/token_infos"
-    response = requests.get(url)
-
-    if response.status_code == 200:
-        return response.json()
-    else:
-        response.raise_for_status()
-
-
 def get_stock_id_by_symbol(symbol):
-    if symbol in cache:
-        return cache[symbol]
-
-    token_infos = fetch_token_infos()
-    for token_info in token_infos:
-        stock = token_info.get('stock', {})
-        if stock.get('symbol') == symbol:
-            stock_id = stock.get('id')
-            # 将symbol和stock_id存入缓存
-            cache[symbol] = stock_id
-            return stock_id
-
+    global stock_ids
+    if symbol in stock_ids:
+        return stock_ids[symbol]
     raise ValueError("Stock symbol not found.")
 
 
