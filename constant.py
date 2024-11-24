@@ -23,6 +23,8 @@ WALLET_FINGERPRINT = 2701109320
 MIN_PROFIT = 0.01
 # Repurchase the stock if the (last buy price - current price) / last buy price is less than this
 DCA_PERCENTAGE = 0.05
+# If the buy count = MAX_BUY_TIMES and the profit is less than this, liquid the stock
+MAX_LOSS_PERCENTAGE = 0.40
 # How much XCH you invested
 INVESTED_XCH = 120
 # Symbols you want to trade

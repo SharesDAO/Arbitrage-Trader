@@ -3,7 +3,7 @@ from datetime import datetime
 
 from chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
 from constant import BUY_VOLUME, MIN_PROFIT, STOCKS, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
-    TRADING_SYMBOLS
+    TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE
 
 from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
 from stock import is_market_open, get_stock_price_from_dinari
@@ -83,6 +83,17 @@ class StockTrader:
         if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
             self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
+        if self.buy_count == MAX_BUY_TIMES and self.profit < -MAX_LOSS_PERCENTAGE:
+            request_xch = self.volume * self.current_price / xch_price
+            if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
+                              self.volume, self.logger):
+                # Failed to send order
+                return
+            record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
+            self.logger.info(
+                f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit, since the loss exceeded the maximum loss percentage")
+            self.position_status = PositionStatus.PENDING_SELL.name
+            self.last_updated = datetime.now()
 
 
 
