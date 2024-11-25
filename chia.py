@@ -30,6 +30,9 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         logger.info(f"Sent {offer_amount} wallet_id {wallet_id} to {address}")
         return True
     else:
+        if result.find("Can't spend more than wallet balance") > 0:
+            logger.error(f"Insufficient balance to send {offer_amount} wallet_id {wallet_id} to {address}")
+            return False
         logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
         return False
 

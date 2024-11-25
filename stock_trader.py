@@ -80,9 +80,6 @@ class StockTrader:
         last_price = last_trade[5]/last_trade[4]
         drop_percentage = (last_price -  self.current_price/xch_price) / last_price
         self.logger.debug(f"Previous price: {last_price}, Current price: {xch_price / self.current_price}, Drop percentage: {drop_percentage * 100:.2f}%")
-        if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
-            self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
-            self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
         if self.buy_count == MAX_BUY_TIMES and self.profit < -MAX_LOSS_PERCENTAGE:
             request_xch = self.volume * self.current_price / xch_price
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
@@ -94,6 +91,10 @@ class StockTrader:
                 f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit, since the loss exceeded the maximum loss percentage")
             self.position_status = PositionStatus.PENDING_SELL.name
             self.last_updated = datetime.now()
+            return
+        if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
+            self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
+            self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
 
 
 
