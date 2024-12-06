@@ -42,6 +42,7 @@ class StockTrader:
         price = float(get_stock_price_from_dinari(self.stock)[1])
 
         volume = xch_volume * xch_price / price
+        timestamp = datetime.now()
         if not send_asset(STOCKS[self.stock]["buy_addr"], 1, volume, xch_volume, self.logger):
             # Failed to send order
             return
@@ -53,7 +54,7 @@ class StockTrader:
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
         self.position_status = PositionStatus.PENDING_BUY.name
         self.buy_count += 1
-        self.last_updated = datetime.now()
+        self.last_updated = timestamp
         record_trade(self.stock, "BUY", price, volume, xch_volume, 0)
         self.logger.info(f"Bought {volume} shares of {self.stock} at ${price}")
 
@@ -63,6 +64,7 @@ class StockTrader:
         request_xch = self.volume * self.current_price / xch_price
         self.profit = request_xch / self.total_cost - 1
         if self.profit >= MIN_PROFIT:
+            timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
                               self.volume, self.logger):
                 # Failed to send order
@@ -71,7 +73,7 @@ class StockTrader:
             self.logger.info(
                 f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit")
             self.position_status = PositionStatus.PENDING_SELL.name
-            self.last_updated = datetime.now()
+            self.last_updated = timestamp
 
     def handle_price_drop(self, xch_price):
         self.current_price = float(get_stock_price_from_dinari(self.stock)[1])
@@ -82,6 +84,7 @@ class StockTrader:
         self.logger.debug(f"Previous price: {last_price}, Current price: {xch_price / self.current_price}, Drop percentage: {drop_percentage * 100:.2f}%")
         if self.buy_count == MAX_BUY_TIMES and self.profit < -MAX_LOSS_PERCENTAGE:
             request_xch = self.volume * self.current_price / xch_price
+            timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
                               self.volume, self.logger):
                 # Failed to send order
@@ -90,7 +93,7 @@ class StockTrader:
             self.logger.info(
                 f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit, since the loss exceeded the maximum loss percentage")
             self.position_status = PositionStatus.PENDING_SELL.name
-            self.last_updated = datetime.now()
+            self.last_updated = timestamp
             return
         if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")

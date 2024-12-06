@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 import requests
 from cachetools import TTLCache, cached
-from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, STOCKS, WALLET_FINGERPRINT
+from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, STOCKS, WALLET_FINGERPRINT, MAX_ORDER_TIME_OFFSET
 from db import update_position, get_last_trade, delete_trade
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
@@ -36,7 +36,7 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
         return False
 
-def get_chia_txs(wallet_id=1, num=20):
+def get_chia_txs(wallet_id=1, num=50):
     global last_checked_tx
     request = '{"wallet_id":'+str(wallet_id)+', "reverse": true, "end":'+str(num)+'}'
     result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
@@ -91,10 +91,10 @@ def check_pending_positions(traders, logger):
                             "utf-8")
                         memo = json.loads(memo)
                         decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][1]).decode('utf-8')
-                        logger.info(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
+                        logger.debug(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
                         response = json.loads(decoded_string)
                         if "symbol" in response and response["symbol"] == trader.stock:
-                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp()):
+                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp() - MAX_ORDER_TIME_OFFSET):
                                 if response["status"] == "CANCELLED":
                                     last_trade = get_last_trade(trader.stock)
                                     trader.volume -= last_trade[4]
@@ -136,10 +136,10 @@ def check_pending_positions(traders, logger):
                             "utf-8")
                         memo = json.loads(memo)
                         decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][1]).decode('utf-8')
-                        logger.info(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
+                        logger.debug(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
                         response = json.loads(decoded_string)
                         if "symbol" in response and response["symbol"] == trader.stock:
-                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp()):
+                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp() - MAX_ORDER_TIME_OFFSET):
                                 if response["status"] == "CANCELLED":
                                     trader.position_status = PositionStatus.TRADABLE.name
                                     trader.last_updated = datetime.now()
@@ -165,8 +165,10 @@ def check_pending_positions(traders, logger):
                         memo = json.loads(memo)
                         decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][0]).decode('utf-8')
                         response = json.loads(decoded_string)
+                        logger.debug(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
                         if "symbol" in response and response["symbol"] == trader.stock:
-                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp()):
+                            logger.debug(f"Last Update {str(trader.last_updated.timestamp())}, Order: {response['order_id']}")
+                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp() - MAX_ORDER_TIME_OFFSET):
                                 if response["status"] == "COMPLETED":
                                     if trader.position_status == PositionStatus.PENDING_SELL.name:
                                         # The order is created after the last update

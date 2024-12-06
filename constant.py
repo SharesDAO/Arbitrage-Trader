@@ -30,6 +30,7 @@ INVESTED_XCH = 120
 # Symbols you want to trade
 TRADING_SYMBOLS = ["AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "TSLA", "META", "PYPL", "RDDT", "COIN", "GBTC", "AMD",
                    "MCD", ]
+MAX_ORDER_TIME_OFFSET = 120
 STOCKS = {
     "AAPL": {
         "buy_addr": "xch1u6679jwhyycxjmtahe7g89xmgpjuykw2j0322h740e7xdf72r43quh9suj",
