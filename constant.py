@@ -27,6 +27,8 @@ DCA_PERCENTAGE = 0.05
 MAX_LOSS_PERCENTAGE = 0.40
 # How much XCH you invested
 INVESTED_XCH = 120
+# How much equivalent USD you invested
+INVESTED_USD = 2200
 # Symbols you want to trade
 TRADING_SYMBOLS = ["AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "TSLA", "META", "PYPL", "RDDT", "COIN", "GBTC", "AMD",
                    "MCD", ]

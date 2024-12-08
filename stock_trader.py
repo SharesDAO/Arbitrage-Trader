@@ -3,7 +3,7 @@ from datetime import datetime
 
 from chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
 from constant import BUY_VOLUME, MIN_PROFIT, STOCKS, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
-    TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE
+    TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE, INVESTED_USD
 
 from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
 from stock import is_market_open, get_stock_price_from_dinari
@@ -133,7 +133,7 @@ def execute_trading(logger):
         xch_balance = get_xch_balance()
         total_xch = xch_balance + stock_balance / xch_price
         logger.info(
-            f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit: {(total_xch / INVESTED_XCH - 1) * 100:.2f}%")
+            f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {(total_xch / INVESTED_XCH - 1) * 100:.2f}%, profit in USD: {(total_xch * xch_price / INVESTED_USD - 1) * 100:.2f}%")
         if is_market_open():
             time.sleep(60)  # Wait a minute before checking again
         else:
