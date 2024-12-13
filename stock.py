@@ -25,15 +25,15 @@ for token_info in token_infos:
 
 
 @cached(clock)
-def is_market_open() -> bool:
+def is_market_open(logger) -> bool:
     url = "https://www.sharesdao.com:8443/util/market_status"
-
     response = requests.get(url)
 
     if response.status_code == 200:
         return response.json()
     else:
-        raise Exception(f"Failed to get market status: {response.text}")
+        logger.error(f"Failed to get market status: {response.text}")
+        return False
 
 
 def get_stock_id_by_symbol(symbol):
@@ -44,19 +44,22 @@ def get_stock_id_by_symbol(symbol):
 
 
 @cached(cache)
-def get_stock_price_from_dinari(symbol):
+def get_stock_price_from_dinari(symbol, logger):
     stock_id = get_stock_id_by_symbol(symbol)
     url = f"https://api.sbt.dinari.com/api/v1/stocks/price_summaries?stock_ids={stock_id}"
     response = requests.get(url)
-
-    if response.status_code == 200:
-        data = response.json()
-        if data and len(data) > 0:
-            stock_info = data[0]
-            bp_price = f'{stock_info.get("price") :.2f}'
-            ap_price = f'{stock_info.get("price") :.2f}'
-            return bp_price, ap_price
+    try:
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                stock_info = data[0]
+                bp_price = f'{stock_info.get("price") :.2f}'
+                ap_price = f'{stock_info.get("price") :.2f}'
+                return bp_price, ap_price
+            else:
+                raise ValueError("No data found for the given stock ID.")
         else:
-            raise ValueError("No data found for the given stock ID.")
-    else:
-        response.raise_for_status()
+            response.raise_for_status()
+    except Exception as e:
+        logger.error(e)
+        return 0, 0

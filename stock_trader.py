@@ -40,7 +40,9 @@ class StockTrader:
 
     def buy_stock(self, xch_volume, xch_price):
         price = float(get_stock_price_from_dinari(self.stock)[1])
-
+        if self.current_price == 0:
+            self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
+            return
         volume = xch_volume * xch_price / price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.stock]["buy_addr"], 1, volume, xch_volume, self.logger):
@@ -60,7 +62,9 @@ class StockTrader:
 
     def sell_stock(self, xch_price):
         self.current_price = float(get_stock_price_from_dinari(self.stock)[0])
-
+        if self.current_price == 0:
+            self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
+            return
         request_xch = self.volume * self.current_price / xch_price
         self.profit = request_xch / self.total_cost - 1
         if self.profit >= MIN_PROFIT:
@@ -77,6 +81,9 @@ class StockTrader:
 
     def handle_price_drop(self, xch_price):
         self.current_price = float(get_stock_price_from_dinari(self.stock)[1])
+        if self.current_price == 0:
+            self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
+            return
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
         last_trade = get_last_trade(self.stock)
         last_price = last_trade[5]/last_trade[4]
@@ -107,7 +114,10 @@ def execute_trading(logger):
 
     while True:
         xch_price = get_xch_price(logger)
-
+        if xch_price is None:
+            logger.error("Failed to get XCH price, skipping...")
+            time.sleep(300)
+            continue
         stock_balance = 0
         for trader in traders:
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open():
@@ -119,6 +129,9 @@ def execute_trading(logger):
                         trader.handle_price_drop(xch_price)  # Handle price drop and repurchase logic
             else:
                 trader.current_price = float(get_stock_price_from_dinari(trader.stock)[1])
+                if trader.current_price == 0:
+                    logger.info(f"Failed to get stock price for {trader.stock}, skipping...")
+                    continue
                 if trader.total_cost > 0:
                     trader.profit = trader.volume * trader.current_price / xch_price / trader.total_cost - 1
 
