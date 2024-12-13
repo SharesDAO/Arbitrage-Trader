@@ -120,7 +120,7 @@ def execute_trading(logger):
             continue
         stock_balance = 0
         for trader in traders:
-            if trader.position_status == PositionStatus.TRADABLE.name and is_market_open():
+            if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 if trader.volume == 0:
                     trader.buy_stock(BUY_VOLUME, xch_price)
                 elif trader.volume > 0:
@@ -147,7 +147,7 @@ def execute_trading(logger):
         total_xch = xch_balance + stock_balance / xch_price
         logger.info(
             f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {(total_xch / INVESTED_XCH - 1) * 100:.2f}%, profit in USD: {(total_xch * xch_price / INVESTED_USD - 1) * 100:.2f}%")
-        if is_market_open():
+        if is_market_open(logger):
             time.sleep(60)  # Wait a minute before checking again
         else:
             time.sleep(300)
