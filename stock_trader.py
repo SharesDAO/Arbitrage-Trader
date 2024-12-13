@@ -39,7 +39,7 @@ class StockTrader:
             create_position(self)
 
     def buy_stock(self, xch_volume, xch_price):
-        price = float(get_stock_price_from_dinari(self.stock)[1])
+        price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
         if self.current_price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
             return
@@ -61,7 +61,7 @@ class StockTrader:
         self.logger.info(f"Bought {volume} shares of {self.stock} at ${price}")
 
     def sell_stock(self, xch_price):
-        self.current_price = float(get_stock_price_from_dinari(self.stock)[0])
+        self.current_price = float(get_stock_price_from_dinari(self.stock, self.logger)[0])
         if self.current_price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
             return
@@ -80,7 +80,7 @@ class StockTrader:
             self.last_updated = timestamp
 
     def handle_price_drop(self, xch_price):
-        self.current_price = float(get_stock_price_from_dinari(self.stock)[1])
+        self.current_price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
         if self.current_price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
             return
@@ -128,7 +128,7 @@ def execute_trading(logger):
                     if trader.position_status == PositionStatus.TRADABLE.name:
                         trader.handle_price_drop(xch_price)  # Handle price drop and repurchase logic
             else:
-                trader.current_price = float(get_stock_price_from_dinari(trader.stock)[1])
+                trader.current_price = float(get_stock_price_from_dinari(trader.stock, logger)[1])
                 if trader.current_price == 0:
                     logger.info(f"Failed to get stock price for {trader.stock}, skipping...")
                     continue
