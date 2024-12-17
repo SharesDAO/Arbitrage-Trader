@@ -20,20 +20,24 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         offer_amount = int(offer * 1000)
         request_amount = int(request * 1000000000000)
         amount = offer_amount / 1000
-    result = subprocess.check_output(
-        [CHIA_PATH, "wallet", "send", f"--fingerprint={WALLET_FINGERPRINT}", f"--id={wallet_id}",
-         f"--address={address}", f"--amount={amount}", f"--fee={CHIA_TX_FEE}", "--reuse", "-e",
-         '{"did_id":"' + DID_HEX + '", "offer":' + str(offer_amount) + ', "request":' + str(
-             request_amount) + '}']).decode(
-        "utf-8")
-    if result.find("SUCCESS") > 0:
-        logger.info(f"Sent {offer_amount} wallet_id {wallet_id} to {address}")
-        return True
-    else:
-        if result.find("Can't spend more than wallet balance") > 0:
-            logger.error(f"Insufficient balance to send {offer_amount} wallet_id {wallet_id} to {address}")
+    try:
+        result = subprocess.check_output(
+            [CHIA_PATH, "wallet", "send", f"--fingerprint={WALLET_FINGERPRINT}", f"--id={wallet_id}",
+             f"--address={address}", f"--amount={amount}", f"--fee={CHIA_TX_FEE}", "--reuse", "-e",
+             '{"did_id":"' + DID_HEX + '", "offer":' + str(offer_amount) + ', "request":' + str(
+                 request_amount) + '}']).decode(
+            "utf-8")
+        if result.find("SUCCESS") > 0:
+            logger.info(f"Sent {offer_amount} wallet_id {wallet_id} to {address}")
+            return True
+        else:
+            if result.find("Can't spend more than wallet balance") > 0:
+                logger.error(f"Insufficient balance to send {offer_amount} wallet_id {wallet_id} to {address}")
+                return False
+            logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
             return False
-        logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
+    except Exception as e:
+        logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}, please check your Chia wallet: {e}")
         return False
 
 def get_chia_txs(wallet_id=1, num=50):

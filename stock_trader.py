@@ -87,7 +87,7 @@ class StockTrader:
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
         last_trade = get_last_trade(self.stock)
         last_price = last_trade[5]/last_trade[4]
-        drop_percentage = (last_price -  self.current_price/xch_price) / last_price
+        drop_percentage = (last_price - self.current_price/xch_price) / last_price
         self.logger.debug(f"Previous price: {last_price}, Current price: {xch_price / self.current_price}, Drop percentage: {drop_percentage * 100:.2f}%")
         if self.buy_count == MAX_BUY_TIMES and self.profit < -MAX_LOSS_PERCENTAGE:
             request_xch = self.volume * self.current_price / xch_price
@@ -141,7 +141,10 @@ def execute_trading(logger):
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
         # Check if the positions are still pending
-        check_pending_positions(traders, logger)
+        try:
+            check_pending_positions(traders, logger)
+        except Exception as e:
+            logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
         # Get XCH balance
         xch_balance = get_xch_balance()
         total_xch = xch_balance + stock_balance / xch_price
