@@ -5,8 +5,9 @@ import subprocess
 from datetime import datetime
 import requests
 from cachetools import TTLCache, cached
-from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, STOCKS, WALLET_FINGERPRINT, MAX_ORDER_TIME_OFFSET
+from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, WALLET_FINGERPRINT, MAX_ORDER_TIME_OFFSET
 from db import update_position, get_last_trade, delete_trade
+from pools import STOCKS
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
 last_checked_tx = {}

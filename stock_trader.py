@@ -2,10 +2,11 @@ import time
 from datetime import datetime
 
 from chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
-from constant import BUY_VOLUME, MIN_PROFIT, STOCKS, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
+from constant import BUY_VOLUME, MIN_PROFIT, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
     TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE, INVESTED_USD
 
 from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
+from pools import STOCKS
 from stock import is_market_open, get_stock_price_from_dinari
 
 
@@ -38,7 +39,7 @@ class StockTrader:
         else:
             create_position(self)
 
-    def buy_stock(self, xch_volume, xch_price):
+    def  buy_stock(self, xch_volume, xch_price):
         price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
         if self.current_price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
