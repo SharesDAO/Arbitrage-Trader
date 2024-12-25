@@ -39,7 +39,7 @@ class StockTrader:
         else:
             create_position(self)
 
-    def  buy_stock(self, xch_volume, xch_price):
+    def buy_stock(self, xch_volume, xch_price):
         price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
         if self.current_price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
@@ -61,14 +61,14 @@ class StockTrader:
         record_trade(self.stock, "BUY", price, volume, xch_volume, 0)
         self.logger.info(f"Bought {volume} shares of {self.stock} at ${price}")
 
-    def sell_stock(self, xch_price):
+    def sell_stock(self, xch_price, liquid=False):
         self.current_price = float(get_stock_price_from_dinari(self.stock, self.logger)[0])
         if self.current_price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
             return
         request_xch = self.volume * self.current_price / xch_price
         self.profit = request_xch / self.total_cost - 1
-        if self.profit >= MIN_PROFIT:
+        if self.profit >= MIN_PROFIT or liquid:
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
                               self.volume, self.logger):
