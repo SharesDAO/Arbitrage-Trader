@@ -41,7 +41,7 @@ class StockTrader:
 
     def buy_stock(self, xch_volume, xch_price):
         price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
-        if self.current_price == 0:
+        if price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
             return
         volume = xch_volume * xch_price / price
