@@ -24,7 +24,7 @@ if __name__ == "__main__":
                 if stock.volume >= 0:
                     xch_price = get_xch_price(logger)
                     stock.sell_stock(xch_price, True)
-                    print(f"Successfully liquidated the stock {stock}")
+                    print(f"Successfully liquidated the stock {stock.stock},  volume {stock.volume}, price {stock.current_price}, total profit {stock.profit}")
             else:
                 print("Please input the stock ticker you want to liquidate")
         else:
