@@ -4,6 +4,7 @@ import sys
 from logging.handlers import TimedRotatingFileHandler
 
 from chia import get_xch_price
+from db import update_position
 from stock_trader import execute_trading, StockTrader
 
 if __name__ == "__main__":
@@ -24,6 +25,7 @@ if __name__ == "__main__":
                 if stock.volume >= 0:
                     xch_price = get_xch_price(logger)
                     stock.sell_stock(xch_price, True)
+                    update_position(stock)
                     print(f"Successfully liquidated the stock {stock.stock},  volume {stock.volume}, price {stock.current_price}, total profit {stock.profit}")
             else:
                 print("Please input the stock ticker you want to liquidate")

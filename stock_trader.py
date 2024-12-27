@@ -2,8 +2,8 @@ import time
 from datetime import datetime
 
 from chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
-from constant import BUY_VOLUME, MIN_PROFIT, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
-    TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE, INVESTED_USD
+from constant import BUY_PERCENTAGE, MIN_PROFIT, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
+    TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE, INVESTED_USD, SELL_ONLY_SYMBOLS
 
 from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
 from pools import STOCKS
@@ -40,6 +40,9 @@ class StockTrader:
             create_position(self)
 
     def buy_stock(self, xch_volume, xch_price):
+        if self.stock in SELL_ONLY_SYMBOLS:
+            self.logger.info(f"{self.stock} is in SELL_ONLY_SYMBOLS, skipping...")
+            return
         price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
         if price == 0:
             self.logger.error(f"Failed to get stock price for {self.stock}, skipping...")
@@ -105,7 +108,7 @@ class StockTrader:
             return
         if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
-            self.buy_stock(BUY_VOLUME, xch_price)  # Repurchase the same volume
+            self.buy_stock(BUY_PERCENTAGE*INVESTED_XCH, xch_price)  # Repurchase the same volume
 
 
 
@@ -123,7 +126,7 @@ def execute_trading(logger):
         for trader in traders:
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 if trader.volume == 0:
-                    trader.buy_stock(BUY_VOLUME, xch_price)
+                    trader.buy_stock(BUY_PERCENTAGE*INVESTED_XCH, xch_price)
                 elif trader.volume > 0:
                     trader.sell_stock(xch_price)  # Try to sell if profit threshold is met
                     if trader.position_status == PositionStatus.TRADABLE.name:
