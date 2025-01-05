@@ -5,12 +5,16 @@ import subprocess
 from datetime import datetime
 import requests
 from cachetools import TTLCache, cached
-from constant import CHIA_PATH, CHIA_TX_FEE, DID_HEX, PositionStatus, WALLET_FINGERPRINT, MAX_ORDER_TIME_OFFSET
+
+from bech32m import encode_puzzle_hash
+from constant import PositionStatus, CONFIG
 from db import update_position, get_last_trade, delete_trade
 from pools import STOCKS
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
 last_checked_tx = {}
+CHIA_PATH = "chia"
+
 
 def send_asset(address: str, wallet_id: int, request: float, offer: float, logger):
     if wallet_id == 1:
@@ -23,9 +27,9 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         amount = offer_amount / 1000
     try:
         result = subprocess.check_output(
-            [CHIA_PATH, "wallet", "send", f"--fingerprint={WALLET_FINGERPRINT}", f"--id={wallet_id}",
-             f"--address={address}", f"--amount={amount}", f"--fee={CHIA_TX_FEE}", "--reuse", "-e",
-             '{"did_id":"' + DID_HEX + '", "offer":' + str(offer_amount) + ', "request":' + str(
+            [CHIA_PATH, "wallet", "send", f'--fingerprint={CONFIG["WALLET_FINGERPRINT"]}", f"--id={wallet_id}',
+             f"--address={address}", f"--amount={amount}", f'--fee={CONFIG["CHIA_TX_FEE"]}', "--reuse", "-e",
+             '{"did_id":"' + CONFIG["DID_HEX"] + '", "offer":' + str(offer_amount) + ', "request":' + str(
                  request_amount) + '}']).decode(
             "utf-8")
         if result.find("SUCCESS") > 0:
@@ -38,12 +42,14 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
             logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
             return False
     except Exception as e:
-        logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}, please check your Chia wallet: {e}")
+        logger.error(
+            f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}, please check your Chia wallet: {e}")
         return False
+
 
 def get_chia_txs(wallet_id=1, num=50):
     global last_checked_tx
-    request = '{"wallet_id":'+str(wallet_id)+', "reverse": true, "end":'+str(num)+'}'
+    request = '{"wallet_id":' + str(wallet_id) + ', "reverse": true, "end":' + str(num) + '}'
     result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
     txs = json.loads(result)["transactions"]
     if wallet_id in last_checked_tx:
@@ -58,9 +64,11 @@ def get_chia_txs(wallet_id=1, num=50):
         last_checked_tx[wallet_id] = txs[0]["name"]
     return txs
 
+
 def check_pending_positions(traders, logger):
     xch_txs = get_chia_txs()
-    balance_result = subprocess.check_output([CHIA_PATH, "wallet", "show", f"--fingerprint={WALLET_FINGERPRINT}"]).decode(
+    balance_result = subprocess.check_output(
+        [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
         "utf-8").split("\n")
     logger.debug(f"Found {len(balance_result)} wallets")
     for trader in traders:
@@ -72,7 +80,8 @@ def check_pending_positions(traders, logger):
             wallet_name = trader.stock
             for l in range(len(balance_result)):
                 if balance_result[l].find(wallet_name) >= 0:
-                    amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", balance_result[l + 3]).group(1))
+                    amount = float(
+                        re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", balance_result[l + 3]).group(1))
                     if amount - expect_amount >= -0.003:
                         trader.position_status = PositionStatus.TRADABLE.name
                         trader.volume = amount
@@ -99,7 +108,8 @@ def check_pending_positions(traders, logger):
                         logger.debug(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
                         response = json.loads(decoded_string)
                         if "symbol" in response and response["symbol"] == trader.stock:
-                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp() - MAX_ORDER_TIME_OFFSET):
+                            if "order_id" in response and response["order_id"] > str(
+                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                 if response["status"] == "CANCELLED":
                                     last_trade = get_last_trade(trader.stock)
                                     trader.volume -= last_trade[4]
@@ -144,7 +154,8 @@ def check_pending_positions(traders, logger):
                         logger.debug(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
                         response = json.loads(decoded_string)
                         if "symbol" in response and response["symbol"] == trader.stock:
-                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp() - MAX_ORDER_TIME_OFFSET):
+                            if "order_id" in response and response["order_id"] > str(
+                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                 if response["status"] == "CANCELLED":
                                     trader.position_status = PositionStatus.TRADABLE.name
                                     trader.last_updated = datetime.now()
@@ -161,19 +172,23 @@ def check_pending_positions(traders, logger):
             # Check if the order is completed
             for tx in xch_txs:
                 if tx["sent"] == 0:
-                    request = '{"transaction_id": "'+tx["name"]+'"}'
+                    request = '{"transaction_id": "' + tx["name"] + '"}'
                     try:
                         t = datetime.now()
-                        logger.debug(f"Get coin info for {trader.stock}, spent {datetime.now().timestamp()-t.timestamp()}")
-                        memo = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transaction_memo", request],stderr=subprocess.DEVNULL).decode(
-                        "utf-8")
+                        logger.debug(
+                            f"Get coin info for {trader.stock}, spent {datetime.now().timestamp() - t.timestamp()}")
+                        memo = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transaction_memo", request],
+                                                       stderr=subprocess.DEVNULL).decode(
+                            "utf-8")
                         memo = json.loads(memo)
                         decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][0]).decode('utf-8')
                         response = json.loads(decoded_string)
                         logger.debug(f"Found coin with memo for {trader.stock}, memo: {decoded_string}")
                         if "symbol" in response and response["symbol"] == trader.stock:
-                            logger.debug(f"Last Update {str(trader.last_updated.timestamp())}, Order: {response['order_id']}")
-                            if "order_id" in response and response["order_id"] > str(trader.last_updated.timestamp() - MAX_ORDER_TIME_OFFSET):
+                            logger.debug(
+                                f"Last Update {str(trader.last_updated.timestamp())}, Order: {response['order_id']}")
+                            if "order_id" in response and response["order_id"] > str(
+                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                 if response["status"] == "COMPLETED":
                                     if trader.position_status == PositionStatus.PENDING_SELL.name:
                                         # The order is created after the last update
@@ -197,7 +212,8 @@ def check_pending_positions(traders, logger):
 
 def get_xch_balance():
     wallet_name = "Chia Wallet"
-    result = subprocess.check_output([CHIA_PATH, "wallet", "show", f"--fingerprint={WALLET_FINGERPRINT}"]).decode(
+    result = subprocess.check_output(
+        [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
         "utf-8").split("\n")
     for l in range(len(result)):
         if result[l].find(wallet_name) >= 0:
@@ -207,7 +223,7 @@ def get_xch_balance():
 
 
 def add_token(symbol):
-    result = subprocess.check_output([CHIA_PATH, "wallet", "add_token", f"--fingerprint={WALLET_FINGERPRINT}",
+    result = subprocess.check_output([CHIA_PATH, "wallet", "add_token", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}",
                                       f"--asset-id={STOCKS[symbol]['asset_id']}", f"--token-name={symbol}"]).decode(
         "utf-8")
     if result.find("Successfully added") >= 0:
@@ -226,6 +242,7 @@ def get_xch_price(logger):
         logger.error(f"Error: {response.status_code}")
         return None
 
+
 @cached(coin_cache)
 def get_coin_info(coin_id, logger):
     url = f"https://api-fin.spacescan.io/coin/info/{coin_id}?version=0.1.0&network=mainnet"
@@ -236,3 +253,17 @@ def get_coin_info(coin_id, logger):
     else:
         logger.error(f"Error: {response.status_code}")
         return None
+
+
+
+def sign_message(did, message):
+    try:
+        did_id = encode_puzzle_hash(did, "did:chia:")
+        response = subprocess.check_output(
+            [CHIA_PATH, "rpc", "wallet", "sign_message_by_id", '{"id":"' + did_id + '", "message":"' + message + '"}'],
+            stderr=subprocess.DEVNULL).decode("utf-8")
+        signature = json.loads(response)
+        return signature["signature"]
+    except Exception as e:
+        print(f"Cannot sign message {message} with DID {did}")
+        raise e

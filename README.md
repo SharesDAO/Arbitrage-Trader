@@ -3,29 +3,26 @@ This program allows for arbitrage trading between XCH and the US stock market. C
 
 
 # How to run it
-1 Prepare a synced Chia wallet running locally and has some XCH in it.
+1. Prepare a **synced Chia wallet running locally** and has some XCH in it. Keep it open.
 
-2 Install requirements: `pip install -r requirements.txt`
+2. Install requirements: `pip install -r requirements.txt`
 
-3 Change the constant.py file based on your case. Values you must change:
-  - DID_HEX: **Your DID hex value and it must be registered on SharesDAO**
-  - CHIA_PATH: Your Chia wallet binary file path
-  - BUY_PERCENTAGE: The percentage of XCH you want to spend on each buy
-  - INVESTED_XCH: Total XCH you invested
-  - WALLET_FINGERPRINT: Your wallet fingerprint
-  - INVESTED_XCH: Your invested XCH, for calculate profit purpose only.
-  - TRADING_SYMBOLS: Which stocks you want to trade. They must be listed on the SharesDAO.
+3. Prepare a DID in your Chia wallet. You can create a new one easily in the Chia wallet.
 
-For other parameters, please the comment in the constant.py.
+4. Register your DID on the [Shares DAO](https://www.sharesdao.com). Edit your trading strategy after login.
 
-4 Run: `python main.py` and keep the thread alive.
+5 Run: `python main.py run -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX>` and keep the thread alive.
 
 # Database and Logs
 Your trading data will be saved in the trading_history.db and logs will in the trader.log
 
 # How to update
-1. **Backup your constant.py file before update**
-2. Checkout the latest code from Github or download the zip file and unzip to the same folder
+## Trading Bot
+Just checkout the latest code from Github or download the zip file and unzip to the same folder
+
+## Trading Strategy
+1. Login your account on the [Shares DAO](https://www.sharesdao.com) and edit your trading strategy there.
+2. Restart your trading bot after saved the strategy.
 
 # How to manually liquidate a stock
-Run this when the bot is not running: `python main.py liquid <Stock Ticker(e.g. GOOGL)>`
+Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -s <Stock Ticker(e.g. GOOGL)>`
