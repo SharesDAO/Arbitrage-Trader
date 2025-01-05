@@ -2,8 +2,7 @@ import time
 from datetime import datetime
 
 from chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
-from constant import BUY_PERCENTAGE, MIN_PROFIT, PositionStatus, MAX_BUY_TIMES, DCA_PERCENTAGE, INVESTED_XCH, \
-    TRADING_SYMBOLS, MAX_LOSS_PERCENTAGE, INVESTED_USD, SELL_ONLY_SYMBOLS
+from constant import PositionStatus, CONFIG
 
 from db import cursor, conn, get_position, update_position, create_position, record_trade, get_last_trade
 from pools import STOCKS
@@ -40,7 +39,7 @@ class StockTrader:
             create_position(self)
 
     def buy_stock(self, xch_volume, xch_price):
-        if self.stock in SELL_ONLY_SYMBOLS:
+        if self.stock in set(CONFIG["SELL_ONLY_SYMBOLS"]):
             self.logger.info(f"{self.stock} is in SELL_ONLY_SYMBOLS, skipping...")
             return
         price = float(get_stock_price_from_dinari(self.stock, self.logger)[1])
@@ -71,7 +70,7 @@ class StockTrader:
             return
         request_xch = self.volume * self.current_price / xch_price
         self.profit = request_xch / self.total_cost - 1
-        if self.profit >= MIN_PROFIT or liquid:
+        if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
                               self.volume, self.logger):
@@ -90,10 +89,11 @@ class StockTrader:
             return
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
         last_trade = get_last_trade(self.stock)
-        last_price = last_trade[5]/last_trade[4]
-        drop_percentage = (last_price - self.current_price/xch_price) / last_price
-        self.logger.debug(f"Previous price: {last_price}, Current price: {xch_price / self.current_price}, Drop percentage: {drop_percentage * 100:.2f}%")
-        if self.buy_count == MAX_BUY_TIMES and self.profit < -MAX_LOSS_PERCENTAGE:
+        last_price = last_trade[5] / last_trade[4]
+        drop_percentage = (last_price - self.current_price / xch_price) / last_price
+        self.logger.debug(
+            f"Previous price: {last_price}, Current price: {xch_price / self.current_price}, Drop percentage: {drop_percentage * 100:.2f}%")
+        if self.buy_count == CONFIG["MAX_BUY_TIMES"] and self.profit < -CONFIG["MAX_LOSS_PERCENTAGE"]:
             request_xch = self.volume * self.current_price / xch_price
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
@@ -106,15 +106,14 @@ class StockTrader:
             self.position_status = PositionStatus.PENDING_SELL.name
             self.last_updated = timestamp
             return
-        if drop_percentage >= DCA_PERCENTAGE and self.buy_count < MAX_BUY_TIMES:  # 5% drop
+        if drop_percentage >= CONFIG["DCA_PERCENTAGE"] and self.buy_count < CONFIG["MAX_BUY_TIMES"]:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
-            self.buy_stock(BUY_PERCENTAGE*INVESTED_XCH, xch_price)  # Repurchase the same volume
-
+            self.buy_stock(CONFIG["BUY_PERCENTAGE"] * CONFIG["INVESTED_XCH"], xch_price)  # Repurchase the same volume
 
 
 def execute_trading(logger):
     # Current market status
-    traders = [StockTrader(stock, logger) for stock in TRADING_SYMBOLS]
+    traders = [StockTrader(stock, logger) for stock in CONFIG["TRADING_SYMBOLS"]]
 
     while True:
         xch_price = get_xch_price(logger)
@@ -126,7 +125,7 @@ def execute_trading(logger):
         for trader in traders:
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 if trader.volume == 0:
-                    trader.buy_stock(BUY_PERCENTAGE*INVESTED_XCH, xch_price)
+                    trader.buy_stock(CONFIG["BUY_PERCENTAGE"] * CONFIG["INVESTED_XCH"], xch_price)
                 elif trader.volume > 0:
                     trader.sell_stock(xch_price)  # Try to sell if profit threshold is met
                     if trader.position_status == PositionStatus.TRADABLE.name:
@@ -153,7 +152,7 @@ def execute_trading(logger):
         xch_balance = get_xch_balance()
         total_xch = xch_balance + stock_balance / xch_price
         logger.info(
-            f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {(total_xch / INVESTED_XCH - 1) * 100:.2f}%, profit in USD: {(total_xch * xch_price / INVESTED_USD - 1) * 100:.2f}%")
+            f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {(total_xch / CONFIG['INVESTED_XCH'] - 1) * 100:.2f}%, profit in USD: {(total_xch * xch_price / CONFIG['INVESTED_USD'] - 1) * 100:.2f}%")
         if is_market_open(logger):
             time.sleep(60)  # Wait a minute before checking again
         else:

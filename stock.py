@@ -50,7 +50,6 @@ def get_stock_price_from_dinari(symbol, logger):
     stock_id = get_stock_id_by_symbol(symbol)
     url = f"https://api.sbt.dinari.com/api/v1/stocks/price_summaries?stock_ids={stock_id}"
     response = requests.get(url)
-    logger.debug(f"Fetching stock price for {symbol} {response.status_code}:{response.json()}")
     try:
         if response.status_code == 200:
             data = response.json()
