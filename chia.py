@@ -27,7 +27,7 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         amount = offer_amount / 1000
     try:
         result = subprocess.check_output(
-            [CHIA_PATH, "wallet", "send", f'--fingerprint={CONFIG["WALLET_FINGERPRINT"]}", f"--id={wallet_id}',
+            [CHIA_PATH, "wallet", "send", f'--fingerprint={CONFIG["WALLET_FINGERPRINT"]}', f'--id={wallet_id}',
              f"--address={address}", f"--amount={amount}", f'--fee={CONFIG["CHIA_TX_FEE"]}', "--reuse", "-e",
              '{"did_id":"' + CONFIG["DID_HEX"] + '", "offer":' + str(offer_amount) + ', "request":' + str(
                  request_amount) + '}']).decode(
