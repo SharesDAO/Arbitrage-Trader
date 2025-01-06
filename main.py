@@ -66,22 +66,22 @@ def run(wallet: int, did: str):
 
 @click.command("liquid", help="Liquidates a stock")
 @click.option(
-    "-w"
+    "-w",
     "--wallet",
     help="Your Chia wallet Fingerprint.",
     type=int,
     required=True
 )
 @click.option(
-    "-d"
+    "-d",
     "--did",
     help="Your DID ID Hex. It must be registered on the SharesDAO.com",
     type=str,
     required=True
 )
 @click.option(
-    "-s"
-    "--stock",
+    "-t",
+    "--ticker",
     help="The stock ticker you want to liquidate",
     type=str,
     required=True
