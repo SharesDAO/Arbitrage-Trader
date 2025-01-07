@@ -3,13 +3,15 @@ from datetime import datetime
 import requests
 from cachetools import TTLCache, cached
 
+from constant import REQUEST_TIMEOUT
+
 cache = TTLCache(maxsize=100, ttl=60)
 clock = TTLCache(maxsize=1, ttl=60)
 
 
 def fetch_token_infos():
     url = "https://api.sbt.dinari.com/api/v1/chain/42161/token_infos"
-    response = requests.get(url)
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
     if response.status_code == 200:
         return response.json()
@@ -30,7 +32,7 @@ for token_info in token_infos:
 def is_market_open(logger) -> bool:
     url = "https://www.sharesdao.com:8443/util/market_status"
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
         if response.status_code == 200:
             return response.json()
@@ -53,7 +55,7 @@ def get_stock_price_from_dinari(symbol, logger):
     try:
         stock_id = get_stock_id_by_symbol(symbol)
         url = f"https://api.sbt.dinari.com/api/v1/stocks/price_summaries?stock_ids={stock_id}"
-        response = requests.get(url)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
         logger.debug(f"Fetching stock price for {symbol} {response.status_code}:{response.json()}")
         if response.status_code == 200:
             data = response.json()

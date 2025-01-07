@@ -7,7 +7,7 @@ import requests
 from cachetools import TTLCache, cached
 
 from bech32m import encode_puzzle_hash
-from constant import PositionStatus, CONFIG
+from constant import PositionStatus, CONFIG, REQUEST_TIMEOUT
 from db import update_position, get_last_trade, delete_trade
 from pools import STOCKS
 
@@ -234,7 +234,7 @@ def add_token(symbol):
 
 def get_xch_price(logger):
     url = f"https://api.sharesdao.com:8443/util/get_price/XCH"
-    response = requests.get(url)
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
     if response.status_code == 200:
         return response.json()["XCH"]
@@ -246,7 +246,7 @@ def get_xch_price(logger):
 @cached(coin_cache)
 def get_coin_info(coin_id, logger):
     url = f"https://api-fin.spacescan.io/coin/info/{coin_id}?version=0.1.0&network=mainnet"
-    response = requests.get(url)
+    response = requests.get(url,  timeout=REQUEST_TIMEOUT)
 
     if response.status_code == 200:
         return response.json()

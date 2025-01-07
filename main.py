@@ -10,7 +10,7 @@ from logging.handlers import TimedRotatingFileHandler
 import requests
 
 from chia import get_xch_price, sign_message
-from constant import CONFIG
+from constant import CONFIG, REQUEST_TIMEOUT
 from db import update_position
 from stock_trader import execute_trading, StockTrader
 
@@ -34,7 +34,7 @@ def load_config(wallet: int, did: str):
     signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
     req = {"did_id": CONFIG["DID_HEX"], "timestamp": now, "signature": signature}
     url = "https://www.sharesdao.com:8443/user/get"
-    response = requests.post(url, data=json.dumps(req))
+    response = requests.post(url, data=json.dumps(req), timeout=REQUEST_TIMEOUT)
     if response.status_code == 200:
         dca = json.loads(response.json()["trading_strategy"])["DCA"]
         CONFIG.update(dca)
