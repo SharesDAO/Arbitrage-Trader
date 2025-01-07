@@ -234,12 +234,16 @@ def add_token(symbol):
 
 def get_xch_price(logger):
     url = f"https://api.sharesdao.com:8443/util/get_price/XCH"
-    response = requests.get(url, timeout=REQUEST_TIMEOUT)
+    try:
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
-    if response.status_code == 200:
-        return response.json()["XCH"]
-    else:
-        logger.error(f"Error: {response.status_code}")
+        if response.status_code == 200:
+            return response.json()["XCH"]
+        else:
+            logger.error(f"Error: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Cannot get XCH price")
         return None
 
 
