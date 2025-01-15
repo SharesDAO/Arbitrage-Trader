@@ -105,17 +105,25 @@ def liquidate(wallet: int, did: str, ticker: str):
     required=False
 )
 @click.option(
+    "-w",
+    "--wallet",
+    help="Your Chia wallet Fingerprint.",
+    type=int,
+    required=True
+)
+@click.option(
     "-t",
     "--ticker",
     help="The stock ticker you want to reset",
     type=str,
     required=True
 )
-def reset(volume: str, ticker: str):
+def reset(volume: str, wallet: int, ticker: str):
+    CONFIG["WALLET_FINGERPRINT"] = wallet
     stock = StockTrader(ticker, logger)
     if volume is not None:
         stock.volume = float(volume)
-    stock.position_status = PositionStatus.TRADABLE
+    stock.position_status = PositionStatus.TRADABLE.name
     update_position(stock)
 
 

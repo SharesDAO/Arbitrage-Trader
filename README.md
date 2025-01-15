@@ -28,4 +28,4 @@ Just checkout the latest code from Github or download the zip file and unzip to 
 Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -t <Stock Ticker(e.g. GOOGL)>`
 
 # How to correct my positions
-Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME>`
+Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME> -w <YOUR_CHIA_WALLET_FINGERPRINT>`
