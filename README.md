@@ -25,4 +25,7 @@ Just checkout the latest code from Github or download the zip file and unzip to 
 2. Restart your trading bot after saved the strategy.
 
 # How to manually liquidate a stock
-Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -s <Stock Ticker(e.g. GOOGL)>`
+Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -t <Stock Ticker(e.g. GOOGL)>`
+
+# How to correct my positions
+Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME>`
