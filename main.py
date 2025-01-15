@@ -101,7 +101,7 @@ def liquidate(wallet: int, did: str, ticker: str):
     "-v",
     "--volume",
     help="The actual volume of your stock",
-    type=int,
+    type=str,
     required=False
 )
 @click.option(
@@ -111,10 +111,10 @@ def liquidate(wallet: int, did: str, ticker: str):
     type=str,
     required=True
 )
-def reset(volume: int, ticker: str):
+def reset(volume: str, ticker: str):
     stock = StockTrader(ticker, logger)
     if volume is not None:
-        stock.volume = volume
+        stock.volume = float(volume)
     stock.position_status = PositionStatus.TRADABLE
     update_position(stock)
 
