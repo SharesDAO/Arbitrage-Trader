@@ -10,7 +10,7 @@ from logging.handlers import TimedRotatingFileHandler
 import requests
 
 from chia import get_xch_price, sign_message
-from constant import CONFIG, REQUEST_TIMEOUT
+from constant import CONFIG, REQUEST_TIMEOUT, PositionStatus
 from db import update_position
 from stock_trader import execute_trading, StockTrader
 
@@ -96,8 +96,31 @@ def liquidate(wallet: int, did: str, ticker: str):
         print(
             f"Successfully liquidated the stock {stock.stock},  volume {stock.volume}, price {stock.current_price}, total profit {stock.profit}")
 
+@click.command("reset", help="Reset a stock")
+@click.option(
+    "-v",
+    "--volume",
+    help="The actual volume of your stock",
+    type=int,
+    required=False
+)
+@click.option(
+    "-t",
+    "--ticker",
+    help="The stock ticker you want to reset",
+    type=str,
+    required=True
+)
+def reset(volume: int, ticker: str):
+    stock = StockTrader(ticker, logger)
+    if volume is not None:
+        stock.volume = volume
+    stock.position_status = PositionStatus.TRADABLE
+    update_position(stock)
+
 
 cli.add_command(run)
 cli.add_command(liquidate)
+cli.add_command(reset)
 if __name__ == "__main__":
     cli()
