@@ -11,7 +11,7 @@ This program allows for arbitrage trading between XCH and the US stock market. C
 
 4. Register your DID on the [Shares DAO](https://www.sharesdao.com). Edit your trading strategy after login.
 
-5 Run: `python main.py run -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX>` and keep the thread alive.
+5 Run: `python main.py run -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -s [DCA|Grid]` and keep the thread alive.
 
 # Database and Logs
 Your trading data will be saved in the trading_history.db and logs will in the trader.log
@@ -25,7 +25,7 @@ Just checkout the latest code from Github or download the zip file and unzip to 
 2. Restart your trading bot after saved the strategy.
 
 # How to manually liquidate a stock
-Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -t <Stock Ticker(e.g. GOOGL)>`
+Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -t <Stock Ticker(e.g. GOOGL)> -s [DCA|Grid]`
 
 # How to correct my positions
-Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME> -w <YOUR_CHIA_WALLET_FINGERPRINT>`
+Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME> -w <YOUR_CHIA_WALLET_FINGERPRINT> -s [DCA|Grid]`
