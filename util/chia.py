@@ -211,7 +211,8 @@ def check_pending_positions(traders, logger):
                                         trader.volume -= last_trade[4]
                                         trader.total_cost -= last_trade[5]
                                         trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.buy_count -= 1
+                                        if trader.type == StrategyType.DCA:
+                                            trader.buy_count -= 1
                                         trader.last_updated = datetime.now()
                                         update_position(trader)
                                         delete_trade(last_trade[0])

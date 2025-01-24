@@ -13,10 +13,10 @@ from util.stock import is_market_open, get_stock_price_from_dinari
 class GridStockTrader(StockTrader):
     def __init__(self, index, stock, logger):
         self.type = StrategyType.GRID
-        self.grid_num = stock["GRID_NUM"]
-        self.max_price = stock["MAX_PRICE"]
-        self.min_price = stock["MIN_PRICE"]
-        self.invested_xch = stock["INVEST_XCH"]
+        self.grid_num = int(stock["GRID_NUM"])
+        self.max_price = float(stock["MAX_PRICE"])
+        self.min_price = float(stock["MIN_PRICE"])
+        self.invested_xch = float(stock["INVEST_XCH"])
         self.ticker = stock["TICKER"]
         self.index = index
         self.grid_width = ((self.max_price / CONFIG["XCH_MIN"] - self.min_price / CONFIG[
