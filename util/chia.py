@@ -285,7 +285,7 @@ def check_pending_positions(traders, logger):
                                         break
                                     if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
                                         # The order is created after the last update
-                                        trader.profit += tx["amount_"]/XCH_MOJO - trader.total_cost
+                                        trader.profit += tx["amount"]/XCH_MOJO - trader.total_cost
                                         trader.position_status = PositionStatus.TRADABLE.name
                                         trader.volume = 0
                                         trader.buy_count = trader.buy_count+1
