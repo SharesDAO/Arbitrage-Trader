@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+# Database
+nohup.out
+mongod.log*
+fndb_test*
+blockchain_test*
+*.db
+*.db-journal
+
+# Logs
+*.log
+*.out
+
+
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+**/*.egg-info
+
+# Unit test / coverage reports
+.cache
+.pytest_cache/
+
+# pyenv
+.python-version
+.eggs
+.venv
+venv
+activate
+
+# mypy
+.mypy_cache/
+
+# Editors
+.vscode
+.idea
+

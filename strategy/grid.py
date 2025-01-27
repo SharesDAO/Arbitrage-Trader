@@ -35,7 +35,8 @@ class GridStockTrader(StockTrader):
 
     def buy_stock(self, xch_volume, xch_price, stock_price):
         buy_price = self.max_price / CONFIG["XCH_MIN"] - (self.index+1) * self.grid_width
-        buy_price = buy_price if buy_price < stock_price/xch_price else stock_price/xch_price
+        while buy_price - self.grid_width > stock_price / xch_price:
+            buy_price -= self.grid_width
         volume = xch_volume / buy_price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.ticker]["buy_addr"], 1, volume, xch_volume, self.logger, self.stock):
@@ -54,7 +55,8 @@ class GridStockTrader(StockTrader):
     def sell_stock(self, xch_price, stock_price, liquid=False):
         self.current_price = stock_price
         sell_price = self.max_price / CONFIG["XCH_MIN"] - self.index * self.grid_width
-        sell_price = sell_price if sell_price > stock_price / xch_price else stock_price / xch_price
+        while sell_price + self.grid_width < stock_price / xch_price:
+            sell_price += self.grid_width
         if liquid:
             sell_price = stock_price / xch_price
         request_xch = self.volume * sell_price
