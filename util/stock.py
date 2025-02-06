@@ -59,8 +59,8 @@ def get_stock_price_from_dao(symbol, logger):
 
         if response.status_code == 200:
             pool = response.json()
-            bp_price = f'{pool["buy_price"] * (1 - CONFIG["SLIPPAGE"]):.2f}'
-            ap_price = f'{pool["sell_price"] * (1 + CONFIG["SLIPPAGE"]) :.2f}'
+            bp_price = f'{float(pool["buy_price"]) * (1 - CONFIG["SLIPPAGE"]):.2f}'
+            ap_price = f'{float(pool["sell_price"]) * (1 + CONFIG["SLIPPAGE"]) :.2f}'
             return float(bp_price), float(ap_price)
         else:
             logger.error(f"Failed to get stock price for {symbol} {response.status_code} : {response.text}")
