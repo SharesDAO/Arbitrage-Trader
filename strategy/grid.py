@@ -6,8 +6,8 @@ from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, che
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
-from constants.pools import STOCKS
-from util.stock import is_market_open, get_stock_price_from_dinari
+from util.stock import is_market_open, get_stock_price, STOCKS
+
 
 #For Grid trading, buy_count = arbitrage times, profit = agg gain
 class GridStockTrader(StockTrader):
@@ -62,7 +62,7 @@ class GridStockTrader(StockTrader):
         request_xch = self.volume * sell_price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.ticker]["sell_addr"], self.wallet_id, request_xch,
-                          self.volume, self.logger, self.stock):
+                          self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT"):
             # Failed to send order
             return
         record_trade(self.stock, "SELL", sell_price * xch_price, self.volume, self.total_cost, request_xch - self.total_cost)
@@ -91,7 +91,7 @@ def execute_grid(logger):
         for trader in traders:
             if trader.ticker not in stocks_stats:
                 stocks_stats[trader.ticker] = {"buying": 0, "selling": 0, "position": 0, "volume": 0, "arbitrage": 0, "profit": 0, "cost": 0, "value": 0, "grid": trader.grid_num, "invest": trader.invested_xch}
-            current_buy_price, current_sell_price = get_stock_price_from_dinari(trader.ticker, logger)
+            current_buy_price, current_sell_price = get_stock_price(trader.ticker, logger)
             if current_buy_price == 0:
                 logger.error(f"Failed to get stock price for {trader.ticker}, skipping...")
                 continue

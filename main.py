@@ -14,7 +14,7 @@ from strategy.grid import execute_grid, GridStockTrader
 from util.chia import get_xch_price, sign_message
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
-from util.stock import get_stock_price_from_dinari
+from util.stock import get_stock_price
 
 logger = logging.getLogger("Rotating Log")
 logger.setLevel(logging.INFO)
@@ -110,12 +110,13 @@ def run(wallet: int, did: str, strategy: str):
     required=True
 )
 def liquidate(wallet: int, did: str, ticker: str, strategy: str):
+    CONFIG["STOCK_API"] = "SHARESDAO" if dao_api else "DINARI"
     load_config(wallet, did, strategy.upper())
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)
         if stock.volume >= 0:
             xch_price = get_xch_price(logger)
-            stock_price = get_stock_price_from_dinari(stock.stock, logger)[0]
+            stock_price = get_stock_price(stock.stock, logger)[0]
             stock.sell_stock(xch_price, stock_price, True)
             update_position(stock)
             print(
@@ -124,7 +125,7 @@ def liquidate(wallet: int, did: str, ticker: str, strategy: str):
         for stock in CONFIG["TRADING_SYMBOLS"]:
             if stock["TICKER"] == ticker:
                 xch_price = get_xch_price(logger)
-                stock_price = get_stock_price_from_dinari(ticker, logger)[0]
+                stock_price = get_stock_price(ticker, logger)[0]
                 for i in range(stock["GRID_NUM"]):
                     grid = GridStockTrader(i, stock, logger)
                     if grid.volume >= 0:

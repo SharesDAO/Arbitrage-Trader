@@ -9,7 +9,7 @@ from cachetools import TTLCache, cached
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
 from util.db import update_position, get_last_trade, delete_trade
-from constants.pools import STOCKS
+from util.stock import STOCKS
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
@@ -19,7 +19,7 @@ CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
 
-def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid = ""):
+def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
     if wallet_id == 1:
         offer_amount = int(offer * XCH_MOJO)
         request_amount = int(request * CAT_MOJO)
@@ -32,7 +32,7 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         result = subprocess.check_output(
             [CHIA_PATH, "wallet", "send", f'--fingerprint={CONFIG["WALLET_FINGERPRINT"]}', f'--id={wallet_id}',
              f"--address={address}", f"--amount={amount}", f'--fee={CONFIG["CHIA_TX_FEE"]}', "--reuse", "-e",
-             '{"did_id":"' + CONFIG["DID_HEX"] + '","customer_id":"' + cid + '", "offer":' + str(offer_amount) + ', "request":' + str(
+             '{"did_id":"' + CONFIG["DID_HEX"] + '","customer_id":"' + cid + '", "type":"' + order_type.upper() + '" "offer":' + str(offer_amount) + ', "request":' + str(
                  request_amount) + '}']).decode(
             "utf-8")
         if result.find("SUCCESS") > 0:
@@ -267,7 +267,6 @@ def check_pending_positions(traders, logger):
                             if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
                                     trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                 if tx["memo"]["status"] == "COMPLETED":
-                                    logger.info(f"Checking sell {trader.stock} {trader.type} confirmation: {tx['memo']}")
                                     if trader.type == StrategyType.DCA:
                                         # The order is created after the last update
                                         trader.profit = 0

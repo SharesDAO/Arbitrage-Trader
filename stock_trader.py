@@ -4,7 +4,6 @@ from datetime import datetime
 from util.chia import add_token
 from constants.constant import PositionStatus
 
-from util.db import get_position, create_position
 
 
 class StockTrader:

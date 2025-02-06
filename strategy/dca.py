@@ -6,8 +6,7 @@ from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, che
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
-from constants.pools import STOCKS
-from util.stock import is_market_open, get_stock_price_from_dinari
+from util.stock import is_market_open, get_stock_price, STOCKS
 
 
 class DCAStockTrader(StockTrader):
@@ -54,7 +53,7 @@ class DCAStockTrader(StockTrader):
         if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
-                              self.volume, self.logger, self.stock+"-DCA"):
+                              self.volume, self.logger, self.stock+"-DCA", "MARKET" if liquid else "LIMIT"):
                 # Failed to send order
                 return
             record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
@@ -108,7 +107,7 @@ def execute_dca(logger):
             logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
         stock_balance = 0
         for trader in traders:
-            current_buy_price, current_sell_price = get_stock_price_from_dinari(trader.stock, logger)
+            current_buy_price, current_sell_price = get_stock_price(trader.stock, logger)
             if current_buy_price == 0:
                 logger.error(f"Failed to get stock price for {trader.stock}, skipping...")
                 continue
@@ -120,7 +119,7 @@ def execute_dca(logger):
                     if trader.position_status == PositionStatus.TRADABLE.name:
                         trader.handle_price_drop(xch_price, current_buy_price, current_sell_price)  # Handle price drop and repurchase logic
             else:
-                trader.current_price = (get_stock_price_from_dinari(trader.stock, logger)[1]+get_stock_price_from_dinari(trader.stock, logger)[0])/2
+                trader.current_price = (get_stock_price(trader.stock, logger)[1]+get_stock_price(trader.stock, logger)[0])/2
                 if trader.current_price == 0:
                     logger.info(f"Failed to get stock price for {trader.stock}, skipping...")
                     continue

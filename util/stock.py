@@ -3,32 +3,30 @@ from cachetools import TTLCache, cached
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG
 
-cache = TTLCache(maxsize=100, ttl=30)
+cache = TTLCache(maxsize=100, ttl=20)
 clock = TTLCache(maxsize=1, ttl=60)
 
+def get_pool_list():
+    url = "https://api.sharesdao.com:8443/pool/list"
+    try:
+        response = requests.post(url, timeout=REQUEST_TIMEOUT, json={"type": 2})
 
-def fetch_token_infos():
-    url = "https://api.sbt.dinari.com/api/v1/chain/42161/token_infos"
-    response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        if response.status_code == 200:
+            stocks = response.json()
+            pools = {}
+            for s in stocks:
+                pools[s["symbol"]] = {"asset_id": s["token_id"], "buy_addr": s["mint_address"], "sell_addr": s["burn_address"], "pool_id": s["pool_id"]}
+            return pools
+        else:
+            raise Exception(f"Failed to get stock pools list {response.status_code}")
+    except Exception as e:
+        raise e
 
-    if response.status_code == 200:
-        return response.json()
-    else:
-        response.raise_for_status()
-
-
-# Get stock info
-stock_ids = {}
-token_infos = fetch_token_infos()
-for token_info in token_infos:
-    stock = token_info.get('stock', {})
-    stock_id = stock.get('id')
-    stock_ids[stock.get('symbol')] = stock_id
-
+STOCKS = get_pool_list()
 
 @cached(clock)
 def is_market_open(logger) -> bool:
-    url = "https://www.sharesdao.com:8443/util/market_status"
+    url = "https://api.sharesdao.com:8443/util/market_status"
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
@@ -50,23 +48,23 @@ def get_stock_id_by_symbol(symbol):
 
 
 @cached(cache)
-def get_stock_price_from_dinari(symbol, logger):
+def get_stock_price(symbol, logger):
+    return get_stock_price_from_dao(symbol, logger)
+
+
+def get_stock_price_from_dao(symbol, logger):
+    url = f"https://api.sharesdao.com:8443/pool/{STOCKS[symbol]['pool_id']}"
     try:
-        stock_id = get_stock_id_by_symbol(symbol)
-        url = f"https://api.sbt.dinari.com/api/v1/stocks/price_summaries?stock_ids={stock_id}"
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        logger.debug(f"Fetching stock price for {symbol} {response.status_code}:{response.json()}")
+
         if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                stock_info = data[0]
-                bp_price = f'{stock_info.get("price") * (1 - CONFIG["SLIPPAGE"]):.2f}'
-                ap_price = f'{stock_info.get("price") * (1 + CONFIG["SLIPPAGE"]) :.2f}'
-                return float(bp_price), float(ap_price)
-            else:
-                raise ValueError("No data found for the given stock ID.")
+            pool = response.json()
+            bp_price = f'{pool["buy_price"] * (1 - CONFIG["SLIPPAGE"]):.2f}'
+            ap_price = f'{pool["sell_price"] * (1 + CONFIG["SLIPPAGE"]) :.2f}'
+            return float(bp_price), float(ap_price)
         else:
-            response.raise_for_status()
+            logger.error(f"Failed to get stock price for {symbol} {response.status_code} : {response.text}")
+            return 0, 0
     except Exception as e:
-        logger.error(e)
+        logger.error(f"Failed to get stock price for {symbol}", e)
         return 0, 0
