@@ -110,7 +110,6 @@ def run(wallet: int, did: str, strategy: str):
     required=True
 )
 def liquidate(wallet: int, did: str, ticker: str, strategy: str):
-    CONFIG["STOCK_API"] = "SHARESDAO" if dao_api else "DINARI"
     load_config(wallet, did, strategy.upper())
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)
