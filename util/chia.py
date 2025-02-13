@@ -1,12 +1,18 @@
 import calendar
 import datetime
 import json
+import os
 import re
 import subprocess
 import time
 from datetime import datetime
 import requests
 from cachetools import TTLCache, cached
+from chia.types.blockchain_format.program import Program
+from chia.types.signing_mode import CHIP_0002_SIGN_MESSAGE_PREFIX
+from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_secret_key, \
+    DEFAULT_HIDDEN_PUZZLE_HASH
+from chia_rs import PrivateKey, AugSchemeMPL
 
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
@@ -68,7 +74,7 @@ def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
         },
     }
     try:
-        inputs["signature"] = sign_message(CONFIG["DID_HEX"], f"{json.dumps(inputs['order'])}|{now}")
+        inputs["signature"] = sign_message_by_key(f"{json.dumps(inputs['order'])}|{now}")
         url = f"{CONFIG['VAULT_HOST']}:8888/trade"
         response = requests.post(url, data=json.dumps(inputs), timeout=REQUEST_TIMEOUT)
         if response.status_code == 200 and response.json()["status"] == "Success":
@@ -343,7 +349,8 @@ def get_coin_info(coin_id, logger):
         return None
 
 
-def sign_message(did, message):
+
+def sign_message_by_wallet(did, message):
     try:
         did_id = encode_puzzle_hash(did, "did:chia:")
         response = subprocess.check_output(
@@ -354,3 +361,9 @@ def sign_message(did, message):
     except Exception as e:
         print(f"Cannot sign message {message} with DID {did}")
         raise e
+
+def sign_message_by_key(message):
+    private_key = PrivateKey.from_bytes(bytes.fromhex(os.environ["DID_PRIVATE_KEY"]))
+    synthetic_secret_key = calculate_synthetic_secret_key(private_key, DEFAULT_HIDDEN_PUZZLE_HASH)
+    hex_message = Program.to((CHIP_0002_SIGN_MESSAGE_PREFIX, message)).get_tree_hash()
+    return str(AugSchemeMPL.sign(synthetic_secret_key, hex_message))

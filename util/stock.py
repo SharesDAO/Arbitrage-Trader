@@ -66,5 +66,5 @@ def get_stock_price_from_dao(symbol, logger):
             logger.error(f"Failed to get stock price for {symbol} {response.status_code} : {response.text}")
             return 0, 0
     except Exception as e:
-        logger.error(f"Failed to get stock price for {symbol}", e)
+        logger.error(f"Failed to get stock price for {symbol}. {e}")
         return 0, 0
