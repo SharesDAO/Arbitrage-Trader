@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
+from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
@@ -31,7 +31,7 @@ class DCAStockTrader(StockTrader):
             return
         volume = xch_volume * xch_price / stock_price
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.stock]["buy_addr"], 1, volume, xch_volume, self.logger, self.stock+"-DCA"):
+        if not trade(self.stock, "BUY", volume, xch_volume, self.logger, self.stock+"-DCA"):
             # Failed to send order
             return
         self.volume += volume
@@ -52,7 +52,7 @@ class DCAStockTrader(StockTrader):
         self.profit = request_xch / self.total_cost - 1
         if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
             timestamp = datetime.now()
-            if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
+            if not trade(self.stock, self.wallet_id, request_xch,
                               self.volume, self.logger, self.stock+"-DCA", "MARKET" if liquid else "LIMIT"):
                 # Failed to send order
                 return
@@ -74,7 +74,7 @@ class DCAStockTrader(StockTrader):
             self.current_price = stock_buy_price
             request_xch = self.volume * self.current_price / xch_price
             timestamp = datetime.now()
-            if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
+            if not trade(self.stock, self.wallet_id, request_xch,
                               self.volume, self.logger, self.stock+"-DCA"):
                 # Failed to send order
                 return

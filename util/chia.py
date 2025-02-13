@@ -1,7 +1,9 @@
+import calendar
 import datetime
 import json
 import re
 import subprocess
+import time
 from datetime import datetime
 import requests
 from cachetools import TTLCache, cached
@@ -18,6 +20,7 @@ last_checked_tx = {}
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
+
 
 def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
     if wallet_id == 1:
@@ -50,42 +53,34 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
         return False
 
 
-def get_chia_txs(wallet_id=1, num=50):
-    global last_checked_tx
-    request = '{"wallet_id":' + str(wallet_id) + ', "reverse": true, "type_filter":{"values":[0], "mode":1},"end":' + str(num) + '}'
-    result = subprocess.check_output([CHIA_PATH, "rpc", "wallet", "get_transactions", request]).decode("utf-8")
-    txs = json.loads(result)["transactions"]
-    filtered_txs = []
-    for tx in txs:
-        if wallet_id in last_checked_tx:
-            if tx["name"] != last_checked_tx[wallet_id]:
-                filtered_txs.append(tx)
-            else:
-                break
+def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
+    now = calendar.timegm(time.gmtime())
+    inputs = {
+        "timestamp": now,
+        "signature": "signature",
+        "order": {
+            "symbol": ticker,
+            "side": side,
+            "request": request,
+            "offer": offer,
+            "type": order_type,
+            "customer_id": customer_id,
+        },
+    }
+    try:
+        inputs["signature"] = sign_message(CONFIG["DID_HEX"], f"{json.dumps(inputs['order'])}|{now}")
+        url = f"{CONFIG['VAULT_HOST']}:8888/trade"
+        response = requests.post(url, data=json.dumps(inputs), timeout=REQUEST_TIMEOUT)
+        if response.status_code == 200 and response.json()["status"] == "Success":
+            logger.info(f"Traded {ticker} {side} {request} {offer}")
+            return True
         else:
-            filtered_txs.append(tx)
-    txs = filtered_txs
-    for tx in txs:
-        # Get tx memo
-        try:
-            request = '{"transaction_id": "' + tx["name"] + '"}'
-            memo = subprocess.check_output(
-                [CHIA_PATH, "rpc", "wallet", "get_transaction_memo", request],
-                stderr=subprocess.DEVNULL).decode(
-                "utf-8")
-            memo = json.loads(memo)
-            if len(memo[tx["name"][2:]][tx["name"][2:]][0])>81:
-                decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][0]).decode('utf-8')
-            else:
-                decoded_string = bytes.fromhex(memo[tx["name"][2:]][tx["name"][2:]][1]).decode('utf-8')
-            response = json.loads(decoded_string)
-            tx["memo"] = response
-        except Exception as e:
-            tx["memo"] = {"customer_id": "", "symbol": ""}
-    if len(txs) > 0:
-        last_checked_tx[wallet_id] = txs[0]["name"]
+            logger.error(f"Failed to trade {ticker} {side} {request} {offer}: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to trade {ticker} {side} {request} {offer}: {e}")
+        return False
 
-    return txs
 
 def get_xch_txs():
     url = f"https://api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
@@ -117,6 +112,7 @@ def get_xch_txs():
             tx["memo"] = {"customer_id": "", "symbol": ""}
     return data["received_transactions"]["transactions"]
 
+
 def get_cat_txs():
     url = f"https://api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}"
 
@@ -147,13 +143,11 @@ def get_cat_txs():
         cat_txs[tx["asset_id"].lower()].append(tx)
     return cat_txs
 
+
 def check_pending_positions(traders, logger):
     xch_txs = get_xch_txs()
     all_cat_txs = get_cat_txs()
-    balance_result = subprocess.check_output(
-        [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
-        "utf-8").split("\n")
-    logger.debug(f"Found {len(balance_result)} wallets")
+    token_balance = get_token_balance()
     logger.info(f"Fetched {len(xch_txs)} XCH txs.")
     for trader in traders:
         confirmed = False
@@ -162,18 +156,13 @@ def check_pending_positions(traders, logger):
             if trader.type == StrategyType.DCA:
                 # Check if the pending buy is confirmed
                 expect_amount = trader.volume
-                wallet_name = trader.ticker
-                for l in range(len(balance_result)):
-                    if balance_result[l].find(wallet_name) >= 0:
-                        amount = float(
-                            re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", balance_result[l + 3]).group(1))
-                        if amount - expect_amount >= -0.003:
-                            trader.position_status = PositionStatus.TRADABLE.name
-                            trader.volume = amount
-                            update_position(trader)
-                            logger.info(f"Buy {trader.stock} confirmed")
-                            confirmed = True
-                            break
+                amount = token_balance[STOCKS[trader.ticker]["token_id"]]["balance"]
+                if amount - expect_amount >= -0.003:
+                    trader.position_status = PositionStatus.TRADABLE.name
+                    trader.volume = amount
+                    update_position(trader)
+                    logger.info(f"Buy {trader.stock} confirmed")
+                    confirmed = True
             if trader.type == StrategyType.GRID:
                 if STOCKS[trader.ticker]["asset_id"].lower() not in all_cat_txs:
                     all_cat_txs[STOCKS[trader.ticker]["asset_id"].lower()] = []
@@ -303,25 +292,27 @@ def check_pending_positions(traders, logger):
 
 
 def get_xch_balance():
-    wallet_name = "Chia Wallet"
-    result = subprocess.check_output(
-        [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
-        "utf-8").split("\n")
-    for l in range(len(result)):
-        if result[l].find(wallet_name) >= 0:
-            amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
-            return amount
-    return 0
+    url = f"https://api.spacescan.io/address/xch-balance/{CONFIG['ADDRESS']}"
+    response = requests.get(url)
+    data = response.json()
+    if data["status"] == "success":
+        return data["xch"]
+    else:
+        return 0
+
+
+def get_token_balance():
+    url = f"https://api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
+    response = requests.get(url)
+    data = response.json()
+    if data["status"] == "success":
+        return {t["asset_id"]: t for t in data["data"]}
+    else:
+        return {}
 
 
 def add_token(symbol):
-    result = subprocess.check_output([CHIA_PATH, "wallet", "add_token", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}",
-                                      f"--asset-id={STOCKS[symbol]['asset_id']}", f"--token-name={symbol}"]).decode(
-        "utf-8")
-    if result.find("Successfully added") >= 0:
-        return int(re.search(r"^Successfully added.*wallet id ([\.\d]+?) .*$", result).group(1))
-    elif result.find("Successfully renamed") >= 0:
-        return int(re.search(r"^Successfully renamed.*wallet_id ([\.\d]+?) .*$", result).group(1))
+    pass
 
 
 @cached(price_cache)
@@ -350,7 +341,6 @@ def get_coin_info(coin_id, logger):
     else:
         logger.error(f"Error: {response.status_code}")
         return None
-
 
 
 def sign_message(did, message):

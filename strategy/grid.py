@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
+from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
@@ -39,7 +39,7 @@ class GridStockTrader(StockTrader):
             buy_price -= self.grid_width
         volume = xch_volume / buy_price
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.ticker]["buy_addr"], 1, volume, xch_volume, self.logger, self.stock):
+        if not trade(self.ticker, 1, volume, xch_volume, self.logger, self.stock):
             # Failed to send order
             return
         self.volume = volume
@@ -61,7 +61,7 @@ class GridStockTrader(StockTrader):
             sell_price = stock_price / xch_price
         request_xch = self.volume * sell_price
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.ticker]["sell_addr"], self.wallet_id, request_xch,
+        if not trade(self.ticker, self.wallet_id, request_xch,
                           self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT"):
             # Failed to send order
             return

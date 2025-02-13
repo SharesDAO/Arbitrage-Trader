@@ -29,7 +29,7 @@ def cli():
     pass
 
 
-def load_config(wallet: int, did: str, strategy: str):
+def load_config(wallet: int, did: str, strategy: str, pool: str):
     CONFIG["WALLET_FINGERPRINT"] = wallet
     CONFIG["DID_HEX"] = did[2:] if did.startswith("0x") else did
     now = calendar.timegm(time.gmtime())
@@ -40,9 +40,16 @@ def load_config(wallet: int, did: str, strategy: str):
     response = requests.post(url, data=json.dumps(req), timeout=REQUEST_TIMEOUT)
     if response.status_code == 200:
         strategy = json.loads(response.json()["trading_strategy"])[strategy]
-        CONFIG["ADDRESS"] = response.json()["address"]
+
         CONFIG.update(strategy)
         logger.info(f"Loaded user trading strategy: {CONFIG}")
+        url = f"https://www.sharesdao.com:8443/pool/{pool}"
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        CONFIG["POOL_ID"] = pool
+        if response.status_code == 200:
+            data = json.loads(response.json()["description"])
+            CONFIG["ADDRESS"] = data["address"]
+            CONFIG["VAULT_HOST"] = data["host"]
     else:
         logger.error(f"Failed to get user trading strategy: {response.text}")
         raise Exception("Failed to get user trading strategy")
@@ -70,12 +77,19 @@ def load_config(wallet: int, did: str, strategy: str):
     type=str,
     required=True
 )
-def run(wallet: int, did: str, strategy: str):
+@click.option(
+    "-p",
+    "--pool",
+    help="Your fund pool ID",
+    type=str,
+    required=True
+)
+def run(wallet: int, did: str, strategy: str, pool: str):
     if strategy.lower() == "dca":
-        load_config(wallet, did, StrategyType.DCA.value)
+        load_config(wallet, did, StrategyType.DCA.value, pool)
         execute_dca(logger)
     if strategy.lower() == "grid":
-        load_config(wallet, did, StrategyType.GRID.value)
+        load_config(wallet, did, StrategyType.GRID.value, pool)
         execute_grid(logger)
         pass
 
@@ -109,9 +123,15 @@ def run(wallet: int, did: str, strategy: str):
     type=str,
     required=True
 )
-def liquidate(wallet: int, did: str, ticker: str, strategy: str):
-    CONFIG["STOCK_API"] = "SHARESDAO" if dao_api else "DINARI"
-    load_config(wallet, did, strategy.upper())
+@click.option(
+    "-p",
+    "--pool",
+    help="Your fund pool ID",
+    type=str,
+    required=True
+)
+def liquidate(wallet: int, did: str, ticker: str, strategy: str, pool: str):
+    load_config(wallet, did, strategy.upper(), pool)
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)
         if stock.volume >= 0:
