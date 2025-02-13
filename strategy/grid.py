@@ -87,7 +87,7 @@ def execute_grid(logger):
         try:
             check_pending_positions(traders, logger)
         except Exception as e:
-            logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
+            logger.error(f"Failed to check pending positions, please check your Chia wallet. {e}")
         for trader in traders:
             if trader.ticker not in stocks_stats:
                 stocks_stats[trader.ticker] = {"buying": 0, "selling": 0, "position": 0, "volume": 0, "arbitrage": 0, "profit": 0, "cost": 0, "value": 0, "grid": trader.grid_num, "invest": trader.invested_xch}

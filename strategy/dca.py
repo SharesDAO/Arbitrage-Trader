@@ -104,7 +104,7 @@ def execute_dca(logger):
         try:
             check_pending_positions(traders, logger)
         except Exception as e:
-            logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
+            logger.error(f"Failed to check pending positions, please check your Chia wallet. {e}")
         stock_balance = 0
         for trader in traders:
             current_buy_price, current_sell_price = get_stock_price(trader.stock, logger)
