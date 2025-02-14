@@ -14,7 +14,8 @@ from strategy.grid import execute_grid, GridStockTrader
 from util.chia import get_xch_price, sign_message_by_key
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
-from util.stock import get_stock_price, get_pool_by_id
+from util.sharesdao import get_pool_by_id
+from util.stock import get_stock_price
 
 logger = logging.getLogger("Rotating Log")
 logger.setLevel(logging.INFO)
