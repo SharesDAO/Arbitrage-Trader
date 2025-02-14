@@ -127,7 +127,7 @@ def liquidate(wallet: int, did: str, ticker: str, strategy: str):
                 stock_price = get_stock_price(ticker, logger)[0]
                 for i in range(stock["GRID_NUM"]):
                     grid = GridStockTrader(i, stock, logger)
-                    if grid.volume >= 0:
+                    if grid.volume > 0 and grid.position_status == PositionStatus.TRADABLE.name:
                         grid.sell_stock(xch_price, stock_price, True)
                         print(
                             f"Successfully liquidated the stock {grid.stock},  volume {grid.volume}, price {grid.current_price}, profit {grid.profit}")
