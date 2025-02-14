@@ -6,7 +6,8 @@ from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_p
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
-from util.stock import is_market_open, get_stock_price, STOCKS
+from util.sharesdao import get_fund_value
+from util.stock import is_market_open, get_stock_price, STOCKS, check_cash_reserve
 
 
 #For Grid trading, buy_count = arbitrage times, profit = agg gain
@@ -83,11 +84,18 @@ def execute_grid(logger):
     while True:
         stocks_stats = {}
         stock_balance = 0
+
         # Check if the positions are still pending
         try:
             check_pending_positions(traders, logger)
         except Exception as e:
             logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
+        fund_xch = get_fund_value(logger) / get_xch_price(logger)
+        logger.info(f"Fund value: {fund_xch} XCH")
+        if fund_xch == 0:
+            logger.error("Failed to get fund value, skipping...")
+            continue
+
         for trader in traders:
             if trader.ticker not in stocks_stats:
                 stocks_stats[trader.ticker] = {"buying": 0, "selling": 0, "position": 0, "volume": 0, "arbitrage": 0, "profit": 0, "cost": 0, "value": 0, "grid": trader.grid_num, "invest": trader.invested_xch}
@@ -107,8 +115,8 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["value"] += trader.volume * (current_sell_price+current_buy_price) /2
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
-                if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0:
-                    trader.buy_stock(trader.invested_xch / trader.grid_num, xch_price, current_sell_price)
+                if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger):
+                    trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
                 elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0:
                     trader.sell_stock(xch_price, current_buy_price)
             else:
@@ -118,7 +126,17 @@ def execute_grid(logger):
                     stocks_stats[trader.ticker]["selling"] += 1
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
-
+        # Check if reserve is enough
+        if not check_cash_reserve(traders, logger):
+            logger.info("Reserve is not enough, selling stocks ...")
+            # Sell the last buy
+            last_trader = None
+            last_buy_date = None
+            for trader in traders:
+                if trader.position_status == PositionStatus.TRADABLE.name and trader.volume > 0 and (trader.last_updated > last_buy_date or last_trader is None):
+                    last_trader = trader
+                    last_buy_date = trader.last_updated
+            last_trader.sell_stock(get_xch_price(logger), get_stock_price(last_trader.ticker, logger)[0], True)
         # Get XCH balance
         xch_balance = get_xch_balance()
         xch_price = get_xch_price(logger)

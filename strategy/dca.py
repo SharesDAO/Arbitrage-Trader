@@ -113,7 +113,7 @@ def execute_dca(logger):
                 continue
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 if trader.volume == 0:
-                    trader.buy_stock(CONFIG["BUY_PERCENTAGE"] * CONFIG["INVESTED_XCH"], xch_price, current_sell_price)
+                    trader.buy_stock(CONFIG["BUY_PERCENTAGE"] * CONFIG["INVESTED_XCH"] * (1 - CONFIG["RESERVE_RATIO"]), xch_price, current_sell_price)
                 elif trader.volume > 0:
                     trader.sell_stock(xch_price, current_buy_price)  # Try to sell if profit threshold is met
                     if trader.position_status == PositionStatus.TRADABLE.name:

@@ -1,7 +1,8 @@
 import requests
 from cachetools import TTLCache, cached
 
-from constants.constant import REQUEST_TIMEOUT, CONFIG
+from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
+from util.chia import get_xch_balance, XCH_MOJO
 
 cache = TTLCache(maxsize=100, ttl=20)
 clock = TTLCache(maxsize=1, ttl=60)
@@ -68,3 +69,5 @@ def get_stock_price_from_dao(symbol, logger):
     except Exception as e:
         logger.error(f"Failed to get stock price for {symbol}. {e}")
         return 0, 0
+
+

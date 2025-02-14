@@ -14,7 +14,7 @@ from strategy.grid import execute_grid, GridStockTrader
 from util.chia import get_xch_price, sign_message_by_key
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
-from util.stock import get_stock_price
+from util.stock import get_stock_price, get_pool_by_id
 
 logger = logging.getLogger("Rotating Log")
 logger.setLevel(logging.INFO)
@@ -29,7 +29,7 @@ def cli():
     pass
 
 
-def load_config(wallet: int, did: str, strategy: str, pool: str):
+def load_config(wallet: int, did: str, strategy: str, pool_id: str):
     CONFIG["WALLET_FINGERPRINT"] = wallet
     CONFIG["DID_HEX"] = did[2:] if did.startswith("0x") else did
     now = calendar.timegm(time.gmtime())
@@ -40,16 +40,11 @@ def load_config(wallet: int, did: str, strategy: str, pool: str):
     response = requests.post(url, data=json.dumps(req), timeout=REQUEST_TIMEOUT)
     if response.status_code == 200:
         strategy = json.loads(response.json()["trading_strategy"])[strategy]
-
         CONFIG.update(strategy)
         logger.info(f"Loaded user trading strategy: {CONFIG}")
-        url = f"https://www.sharesdao.com:8443/pool/{pool}"
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        CONFIG["POOL_ID"] = pool
-        if response.status_code == 200:
-            data = json.loads(response.json()["description"])
-            CONFIG["ADDRESS"] = data["address"]
-            CONFIG["VAULT_HOST"] = data["host"]
+        pool = get_pool_by_id(pool_id)
+        CONFIG["ADDRESS"] = pool["address"]
+        CONFIG["VAULT_HOST"] = pool["host"]
     else:
         logger.error(f"Failed to get user trading strategy: {response.text}")
         raise Exception("Failed to get user trading strategy")
@@ -85,6 +80,7 @@ def load_config(wallet: int, did: str, strategy: str, pool: str):
     required=True
 )
 def run(wallet: int, did: str, strategy: str, pool: str):
+    CONFIG["FUND_ID"] = pool
     if strategy.lower() == "dca":
         load_config(wallet, did, StrategyType.DCA.value, pool)
         execute_dca(logger)

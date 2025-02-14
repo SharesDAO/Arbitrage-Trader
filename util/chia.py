@@ -22,6 +22,7 @@ from util.stock import STOCKS
 coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
 tx_cache = TTLCache(maxsize=100, ttl=30)
+balance_cache = TTLCache(maxsize=10, ttl=30)
 last_checked_tx = {}
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
@@ -297,6 +298,7 @@ def check_pending_positions(traders, logger):
     return False
 
 
+@cached(balance_cache)
 def get_xch_balance():
     url = f"https://api.spacescan.io/address/xch-balance/{CONFIG['ADDRESS']}"
     response = requests.get(url)
@@ -307,6 +309,7 @@ def get_xch_balance():
         return 0
 
 
+@cached(balance_cache)
 def get_token_balance():
     url = f"https://api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
     response = requests.get(url)
