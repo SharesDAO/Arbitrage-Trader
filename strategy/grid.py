@@ -6,8 +6,8 @@ from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_p
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
-from util.sharesdao import get_fund_value
-from util.stock import is_market_open, get_stock_price, STOCKS, check_cash_reserve
+from util.sharesdao import get_fund_value, check_cash_reserve
+from util.stock import is_market_open, get_stock_price
 
 
 #For Grid trading, buy_count = arbitrage times, profit = agg gain
