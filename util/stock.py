@@ -2,7 +2,6 @@ import requests
 from cachetools import TTLCache, cached
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
-from util.chia import get_xch_balance, XCH_MOJO
 
 cache = TTLCache(maxsize=100, ttl=20)
 clock = TTLCache(maxsize=1, ttl=60)

@@ -3,3 +3,4 @@ cachetools
 yfinance
 pytz
 click
+chia-blockchain
