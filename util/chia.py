@@ -304,14 +304,18 @@ def check_pending_positions(traders, logger):
 
 def get_xch_balance():
     wallet_name = "Chia Wallet"
-    result = subprocess.check_output(
-        [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
-        "utf-8").split("\n")
-    for l in range(len(result)):
-        if result[l].find(wallet_name) >= 0:
-            amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
-            return amount
-    return 0
+    try:
+        result = subprocess.check_output(
+            [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
+            "utf-8").split("\n")
+        for l in range(len(result)):
+            if result[l].find(wallet_name) >= 0:
+                amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
+                return amount
+        return 0
+    except Exception as e:
+        print(f"Cannot get XCH balance")
+        return 0
 
 
 def add_token(symbol):
