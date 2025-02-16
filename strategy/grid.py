@@ -115,10 +115,13 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["value"] += trader.volume * (current_sell_price+current_buy_price) /2
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
-                if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger):
-                    trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
-                elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0:
-                    trader.sell_stock(xch_price, current_buy_price)
+                try:
+                    if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger):
+                        trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
+                    elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0:
+                        trader.sell_stock(xch_price, current_buy_price)
+                except Exception as e:
+                    logger.error(f"Failed to trade {trader.stock}: {e}")
             else:
                 if trader.position_status == PositionStatus.PENDING_BUY.name:
                     stocks_stats[trader.ticker]["buying"] += 1
@@ -127,16 +130,21 @@ def execute_grid(logger):
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
         # Check if reserve is enough
-        if not check_cash_reserve(traders, logger):
-            logger.info("Reserve is not enough, selling stocks ...")
-            # Sell the last buy
-            last_trader = None
-            last_buy_date = None
-            for trader in traders:
-                if trader.position_status == PositionStatus.TRADABLE.name and trader.volume > 0 and (trader.last_updated > last_buy_date or last_trader is None):
-                    last_trader = trader
-                    last_buy_date = trader.last_updated
-            last_trader.sell_stock(get_xch_price(logger), get_stock_price(last_trader.ticker, logger)[0], True)
+        try:
+            if not check_cash_reserve(traders, logger):
+                logger.info("Reserve is not enough, selling stocks ...")
+                # Sell the last buy
+                last_trader = None
+                last_buy_date = None
+                for trader in traders:
+                    if trader.position_status == PositionStatus.TRADABLE.name and trader.volume > 0 and (trader.last_updated > last_buy_date or last_trader is None):
+                        last_trader = trader
+                        last_buy_date = trader.last_updated
+                if last_trader is not None:
+                    logger.info(f"Selling {last_trader.volume} shares of {last_trader.stock} to cover sell order.")
+                    last_trader.sell_stock(get_xch_price(logger), get_stock_price(last_trader.ticker, logger)[0], True)
+        except Exception as e:
+            logger.error(f"Failed to check reserve: {e}")
         # Get XCH balance
         xch_balance = get_xch_balance()
         xch_price = get_xch_price(logger)

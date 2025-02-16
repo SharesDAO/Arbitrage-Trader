@@ -26,7 +26,7 @@ def get_pending_sell_orders(logger):
     url = f"https://api.sharesdao.com:8443/transaction/pool"
     try:
         input_data = {"pool_id": CONFIG["FUND_ID"], "status": 2, "start_index": 0, "num_of_transactions": 200}
-        response = requests.get(url, json=input_data, timeout=REQUEST_TIMEOUT)
+        response = requests.post(url, json=input_data, timeout=REQUEST_TIMEOUT)
         if response.status_code == 200:
             orders = response.json()
             amount = 0
@@ -66,4 +66,4 @@ def check_cash_reserve(traders, logger):
             return True
     except Exception as e:
         logger.error(f"Failed to check reverse fund {CONFIG['FUND_ID']}. {e}")
-        return False
+        raise e
