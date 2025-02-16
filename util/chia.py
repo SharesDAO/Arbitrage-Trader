@@ -23,6 +23,7 @@ coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
 tx_cache = TTLCache(maxsize=100, ttl=30)
 balance_cache = TTLCache(maxsize=10, ttl=30)
+token_cache = TTLCache(maxsize=10, ttl=30)
 last_checked_tx = {}
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
@@ -309,7 +310,7 @@ def get_xch_balance():
         return 0
 
 
-@cached(balance_cache)
+@cached(token_cache)
 def get_token_balance():
     url = f"https://api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
     response = requests.get(url)
