@@ -44,8 +44,9 @@ def load_config(wallet: int, did: str, strategy: str, pool_id: str):
         CONFIG.update(strategy)
         logger.info(f"Loaded user trading strategy: {CONFIG}")
         pool = get_pool_by_id(pool_id)
-        CONFIG["ADDRESS"] = pool["address"]
-        CONFIG["VAULT_HOST"] = pool["host"]
+        data = json.loads(pool["description"])
+        CONFIG["ADDRESS"] = data["address"]
+        CONFIG["VAULT_HOST"] = data["host"]
     else:
         logger.error(f"Failed to get user trading strategy: {response.text}")
         raise Exception("Failed to get user trading strategy")
