@@ -40,7 +40,7 @@ class GridStockTrader(StockTrader):
             buy_price -= self.grid_width
         volume = xch_volume / buy_price
         timestamp = datetime.now()
-        if not trade(self.ticker, 1, volume, xch_volume, self.logger, self.stock):
+        if not trade(self.ticker, "BUY", volume, xch_volume, self.logger, self.stock):
             # Failed to send order
             return
         self.volume = volume
@@ -62,7 +62,7 @@ class GridStockTrader(StockTrader):
             sell_price = stock_price / xch_price
         request_xch = self.volume * sell_price
         timestamp = datetime.now()
-        if not trade(self.ticker, self.wallet_id, request_xch,
+        if not trade(self.ticker, "SELL", request_xch,
                           self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT"):
             # Failed to send order
             return

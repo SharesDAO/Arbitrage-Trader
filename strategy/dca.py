@@ -74,7 +74,7 @@ class DCAStockTrader(StockTrader):
             self.current_price = stock_buy_price
             request_xch = self.volume * self.current_price / xch_price
             timestamp = datetime.now()
-            if not trade(self.stock, self.wallet_id, request_xch,
+            if not trade(self.stock, "SELL", request_xch,
                               self.volume, self.logger, self.stock+"-DCA"):
                 # Failed to send order
                 return
