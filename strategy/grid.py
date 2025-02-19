@@ -80,7 +80,7 @@ def execute_grid(logger):
         for i in range(stock["GRID_NUM"]):
             trader = GridStockTrader(i, stock, logger)
             traders.append(trader)
-
+    fund_xch = 0
     while True:
         stocks_stats = {}
         stock_balance = 0
@@ -90,7 +90,8 @@ def execute_grid(logger):
             check_pending_positions(traders, logger)
         except Exception as e:
             logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
-        fund_xch = get_fund_value(logger) / get_xch_price(logger)
+        if fund_xch == 0:
+            fund_xch = get_fund_value(logger) / get_xch_price(logger)
         logger.info(f"Fund value: {fund_xch} XCH")
         if fund_xch == 0:
             logger.error("Failed to get fund value, skipping...")
@@ -159,6 +160,7 @@ def execute_grid(logger):
         total_xch = xch_balance + stock_balance / xch_price
         logger.info(
             f"Total Stock Balance: {stock_balance} USD, Unused XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {total_profit} XCH")
+        fund_xch = total_xch
         if is_market_open(logger):
             time.sleep(60)  # Wait a minute before checking again
         else:

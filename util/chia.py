@@ -30,7 +30,7 @@ XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
 
 
-def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
+def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid="", order_type="LIMIT"):
     if wallet_id == 1:
         offer_amount = int(offer * XCH_MOJO)
         request_amount = int(request * CAT_MOJO)
