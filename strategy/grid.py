@@ -148,6 +148,9 @@ def execute_grid(logger):
             logger.error(f"Failed to check reserve: {e}")
         # Get XCH balance
         xch_balance = get_xch_balance()
+        if xch_balance is None:
+            logger.error("Failed to get XCH balance, skipping...")
+            continue
         xch_price = get_xch_price(logger)
         if xch_price is None:
             logger.error("Failed to get XCH price, skipping...")
