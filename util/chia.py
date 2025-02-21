@@ -31,11 +31,11 @@ def send_asset(address: str, wallet_id: int, request: float, offer: float, logge
     try:
         result = subprocess.check_output(
             [CHIA_PATH, "wallet", "send", f'--fingerprint={CONFIG["WALLET_FINGERPRINT"]}', f'--id={wallet_id}',
-             f"--address={address}", f"--amount={amount}", f'--fee={CONFIG["CHIA_TX_FEE"]}', "--reuse","--override", "-e",
+             f"--address={address}", f"--amount={amount}", f'--fee={CONFIG["CHIA_TX_FEE"]}', "--reuse", "--override", "-e",
              '{"did_id":"' + CONFIG["DID_HEX"] + '","customer_id":"' + cid + '", "type":"' + order_type.upper() + '", "offer":' + str(offer_amount) + ', "request":' + str(
                  request_amount) + '}']).decode(
             "utf-8")
-        if result.find("SUCCESS") > 0:
+        if result.find("SUCCESS") > 0 or result.find("INVALID_FEE_TOO_CLOSE_TO_ZERO") > 0:
             logger.info(f"Sent {offer_amount} wallet_id {wallet_id} to {address}")
             return True
         else:
