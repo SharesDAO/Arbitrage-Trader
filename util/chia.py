@@ -14,6 +14,7 @@ from util.stock import STOCKS
 coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
 tx_cache = TTLCache(maxsize=100, ttl=30)
+cat_cache = TTLCache(maxsize=100, ttl=30)
 last_checked_tx = {}
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
@@ -309,13 +310,30 @@ def get_xch_balance():
             [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
             "utf-8").split("\n")
         for l in range(len(result)):
-            if result[l].find(wallet_name) >= 0:
+            if result[l].find(f"{wallet_name}:") >= 0:
                 amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
                 return amount
         return 0
     except Exception as e:
         print(f"Cannot get XCH balance")
         return 0
+
+
+@cached(cat_cache)
+def get_cat_balance(symbol):
+    wallet_name = symbol
+    try:
+        result = subprocess.check_output(
+            [CHIA_PATH, "wallet", "show", f"--fingerprint={CONFIG['WALLET_FINGERPRINT']}"]).decode(
+            "utf-8").split("\n")
+        for l in range(len(result)):
+            if result[l].find(f"{wallet_name}:") >= 0:
+                amount = float(re.search(r"^   -Spendable:             ([\.0-9]+?) .*$", result[l + 3]).group(1))
+                return amount
+        return 0
+    except Exception as e:
+        print(f"Cannot get CAT balance")
+        return None
 
 
 def add_token(symbol):

@@ -1,8 +1,9 @@
+import math
 import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
+from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions, get_cat_balance
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
@@ -71,14 +72,39 @@ class GridStockTrader(StockTrader):
         self.position_status = PositionStatus.PENDING_SELL.name
         self.last_updated = timestamp
 
+    def adjust_volume(self, total_volume):
+        # Get current stock balance
+        balance = get_cat_balance(self.ticker)
+        if balance is None:
+            self.logger.error(f"Failed to get balance for {self.stock}, skipping...")
+            return
+        if self.position_status == PositionStatus.TRADABLE.name and total_volume > 0:
+            self.volume = math.floor(self.volume / total_volume * balance * 1000) / 1000
+            self.logger.info(f"Adjusting volume for {self.stock} to {self.volume}")
+
 
 def execute_grid(logger):
     traders = []
     for stock in CONFIG["TRADING_SYMBOLS"]:
         # Create grids for each stock
+        total_volume = 0
+        grid_traders = []
         for i in range(stock["GRID_NUM"]):
             trader = GridStockTrader(i, stock, logger)
-            traders.append(trader)
+            if trader.position_status == PositionStatus.TRADABLE.name:
+                total_volume += trader.volume
+            grid_traders.append(trader)
+        traders.extend(grid_traders)
+        balance = get_cat_balance(stock["TICKER"])
+        if balance is None:
+            logger.error(f"Failed to get balance for {stock['TICKER']}, skipping...")
+            continue
+        if abs(total_volume - balance) > 0.001:
+            # Adjust volume for each grid trader
+            for trader in grid_traders:
+                trader.adjust_volume(total_volume)
+
+
 
     while True:
         stocks_stats = {}

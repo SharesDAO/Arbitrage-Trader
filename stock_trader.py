@@ -36,3 +36,6 @@ class StockTrader:
 
     def handle_price_drop(self, xch_price, stock_buy_price, stock_sell_price):
         pass
+
+    def adjust_volume(self, total_volume):
+        pass

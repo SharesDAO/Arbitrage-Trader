@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions
+from util.chia import get_xch_price, send_asset, get_xch_balance, add_token, check_pending_positions, get_cat_balance
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
@@ -31,7 +31,7 @@ class DCAStockTrader(StockTrader):
             return
         volume = xch_volume * xch_price / stock_price
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.stock]["buy_addr"], 1, volume, xch_volume, self.logger, self.stock+"-DCA"):
+        if not send_asset(STOCKS[self.stock]["buy_addr"], 1, volume, xch_volume, self.logger, self.stock + "-DCA"):
             # Failed to send order
             return
         self.volume += volume
@@ -53,7 +53,7 @@ class DCAStockTrader(StockTrader):
         if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
-                              self.volume, self.logger, self.stock+"-DCA", "MARKET" if liquid else "LIMIT"):
+                              self.volume, self.logger, self.stock + "-DCA", "MARKET" if liquid else "LIMIT"):
                 # Failed to send order
                 return
             record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
@@ -75,7 +75,7 @@ class DCAStockTrader(StockTrader):
             request_xch = self.volume * self.current_price / xch_price
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_xch,
-                              self.volume, self.logger, self.stock+"-DCA"):
+                              self.volume, self.logger, self.stock + "-DCA"):
                 # Failed to send order
                 return
             record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
@@ -86,13 +86,25 @@ class DCAStockTrader(StockTrader):
             return
         if drop_percentage >= CONFIG["DCA_PERCENTAGE"] and self.buy_count < CONFIG["MAX_BUY_TIMES"]:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")
-            self.buy_stock(CONFIG["BUY_PERCENTAGE"] * CONFIG["INVESTED_XCH"], xch_price, stock_sell_price)  # Repurchase the same volume
+            self.buy_stock(CONFIG["BUY_PERCENTAGE"] * CONFIG["INVESTED_XCH"], xch_price,
+                           stock_sell_price)  # Repurchase the same volume
+
+    def adjust_volume(self, total_volume):
+        # Get current stock balance
+        balance = get_cat_balance(self.ticker)
+        if balance is None:
+            self.logger.error(f"Failed to get balance for {self.stock}, skipping...")
+            return
+        if self.position_status == PositionStatus.TRADABLE.name:
+            self.volume = balance
+            self.logger.info(f"Adjusting volume for {self.stock} to {self.volume}")
 
 
 def execute_dca(logger):
     # Current market status
     traders = [DCAStockTrader(stock, logger) for stock in CONFIG["TRADING_SYMBOLS"]]
-
+    for trader in traders:
+        trader.adjust_volume(trader.volume)
     while True:
         xch_price = get_xch_price(logger)
         if xch_price is None:
@@ -117,9 +129,11 @@ def execute_dca(logger):
                 elif trader.volume > 0:
                     trader.sell_stock(xch_price, current_buy_price)  # Try to sell if profit threshold is met
                     if trader.position_status == PositionStatus.TRADABLE.name:
-                        trader.handle_price_drop(xch_price, current_buy_price, current_sell_price)  # Handle price drop and repurchase logic
+                        trader.handle_price_drop(xch_price, current_buy_price,
+                                                 current_sell_price)  # Handle price drop and repurchase logic
             else:
-                trader.current_price = (get_stock_price(trader.stock, logger)[1]+get_stock_price(trader.stock, logger)[0])/2
+                trader.current_price = (get_stock_price(trader.stock, logger)[1] +
+                                        get_stock_price(trader.stock, logger)[0]) / 2
                 if trader.current_price == 0:
                     logger.info(f"Failed to get stock price for {trader.stock}, skipping...")
                     continue
@@ -136,7 +150,7 @@ def execute_dca(logger):
         xch_balance = get_xch_balance()
         total_xch = xch_balance + stock_balance / xch_price
         logger.info(
-            f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {(total_xch / CONFIG['INVESTED_XCH'] - 1) * 100:.2f}%, profit in USD: {(total_xch * xch_price / CONFIG['INVESTED_USD'] - 1) * 100:.2f}%")
+            f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {0 if CONFIG['INVESTED_XCH'] == 0 else (total_xch / CONFIG['INVESTED_XCH'] - 1) * 100:.2f}%, profit in USD: {0 if CONFIG['INVESTED_USD'] == 0 else (total_xch * xch_price / CONFIG['INVESTED_USD'] - 1) * 100:.2f}%")
         if is_market_open(logger):
             time.sleep(60)  # Wait a minute before checking again
         else:
