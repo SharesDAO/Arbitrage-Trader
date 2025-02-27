@@ -2,12 +2,12 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade
+from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade, get_token_balance
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
 from util.sharesdao import get_fund_value, check_cash_reserve
-from util.stock import is_market_open, get_stock_price
+from util.stock import is_market_open, get_stock_price, STOCKS
 
 
 #For Grid trading, buy_count = arbitrage times, profit = agg gain
@@ -156,8 +156,9 @@ def execute_grid(logger):
             logger.error("Failed to get XCH price, skipping...")
             continue
         total_profit = 0
+        token_balance = get_token_balance()
         for s, stats in stocks_stats.items():
-            logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Total Volume: {stats['volume']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
+            logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Expect/Actual Volume: {stats['volume']}/{token_balance[STOCKS[s]['token_id']]['balance']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
                         f" Balance: {stats['value']/xch_price+(1-(stats['position']+stats['buying'])/stats['grid'])*stats['invest']+stats['profit']} XCH")
             total_profit += stats['profit']
         total_xch = xch_balance + stock_balance / xch_price
