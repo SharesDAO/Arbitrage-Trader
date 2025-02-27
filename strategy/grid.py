@@ -158,7 +158,7 @@ def execute_grid(logger):
         total_profit = 0
         token_balance = get_token_balance()
         for s, stats in stocks_stats.items():
-            logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Expect/Actual Volume: {stats['volume']}/{token_balance[STOCKS[s]['token_id']]['balance']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
+            logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Expect/Actual Volume: {stats['volume']}/{token_balance[STOCKS[s]['asset_id']]['balance']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
                         f" Balance: {stats['value']/xch_price+(1-(stats['position']+stats['buying'])/stats['grid'])*stats['invest']+stats['profit']} XCH")
             total_profit += stats['profit']
         total_xch = xch_balance + stock_balance / xch_price
