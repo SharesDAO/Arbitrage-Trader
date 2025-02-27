@@ -119,7 +119,7 @@ def execute_grid(logger):
                 try:
                     if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger):
                         trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
-                    elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0:
+                    elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0 and current_buy_price / xch_price > trader.avg_price:
                         trader.sell_stock(xch_price, current_buy_price)
                 except Exception as e:
                     logger.error(f"Failed to trade {trader.stock}: {e}")
