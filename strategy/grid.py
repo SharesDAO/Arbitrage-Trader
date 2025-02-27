@@ -104,8 +104,6 @@ def execute_grid(logger):
             for trader in grid_traders:
                 trader.adjust_volume(total_volume)
 
-
-
     while True:
         stocks_stats = {}
         stock_balance = 0
@@ -135,7 +133,7 @@ def execute_grid(logger):
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0:
                     trader.buy_stock(trader.invested_xch / trader.grid_num, xch_price, current_sell_price)
-                elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0:
+                elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0 and current_buy_price / xch_price > trader.avg_price:
                     trader.sell_stock(xch_price, current_buy_price)
             else:
                 if trader.position_status == PositionStatus.PENDING_BUY.name:
