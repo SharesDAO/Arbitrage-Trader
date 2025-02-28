@@ -4,7 +4,7 @@ import requests
 from cachetools import TTLCache, cached
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
-from util.chia import XCH_MOJO, get_xch_balance
+from util.chia import XCH_MOJO, get_xch_balance, get_xch_price
 
 order_cache = TTLCache(maxsize=100, ttl=40)
 
@@ -57,9 +57,10 @@ def check_cash_reserve(traders, logger):
         required_amount = get_pending_sell_orders(logger)
         xch_balance = get_xch_balance()
         pending_sell_amount = 0
+        xch_price = get_xch_price(logger)
         for t in traders:
             if t.position_status == PositionStatus.PENDING_LIQUIDATION.name:
-                pending_sell_amount += t.volume
+                pending_sell_amount += t.volume * t.current_price / xch_price
         logger.info(f"Required amount:{required_amount}, Current amount: {xch_balance + pending_sell_amount}")
         if required_amount > xch_balance + pending_sell_amount:
             return False
