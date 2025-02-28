@@ -52,7 +52,7 @@ def get_fund_value(logger):
         logger.error(f"Failed to get fund value {CONFIG['FUND_ID']}. {e}")
         return 0
 
-def check_cash_reserve(traders, logger):
+def check_cash_reserve(traders, fund_xch, is_buy, logger):
     try:
         required_amount = get_pending_sell_orders(logger)
         xch_balance = get_xch_balance()
@@ -62,7 +62,7 @@ def check_cash_reserve(traders, logger):
             if t.position_status == PositionStatus.PENDING_LIQUIDATION.name:
                 pending_sell_amount += t.volume * t.current_price / xch_price
         logger.info(f"Required amount:{required_amount}, Current amount: {xch_balance + pending_sell_amount}")
-        if required_amount > xch_balance + pending_sell_amount:
+        if required_amount > xch_balance + pending_sell_amount and ((fund_xch -required_amount) * CONFIG["RESERVE_RATIO"] > xch_balance - required_amount and is_buy):
             return False
         else:
             return True

@@ -117,7 +117,7 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 try:
-                    if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger) and fund_xch * CONFIG["RESERVE_RATIO"] < xch_balance:
+                    if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, fund_xch, True, logger):
                         trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
                     elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0 and current_buy_price / xch_price > trader.avg_price:
                         trader.sell_stock(xch_price, current_buy_price)
@@ -132,7 +132,7 @@ def execute_grid(logger):
             update_position(trader)
         # Check if reserve is enough
         try:
-            if not check_cash_reserve(traders, logger):
+            if not check_cash_reserve(traders, fund_xch, False, logger):
                 logger.info("Reserve is not enough, selling stocks ...")
                 # Sell the last buy
                 last_trader = None
