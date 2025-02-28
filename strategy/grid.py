@@ -96,7 +96,7 @@ def execute_grid(logger):
         if fund_xch == 0:
             logger.error("Failed to get fund value, skipping...")
             continue
-
+        xch_balance = get_xch_balance()
         for trader in traders:
             if trader.ticker not in stocks_stats:
                 stocks_stats[trader.ticker] = {"buying": 0, "selling": 0, "position": 0, "volume": 0, "arbitrage": 0, "profit": 0, "cost": 0, "value": 0, "grid": trader.grid_num, "invest": trader.invested_xch}
@@ -117,7 +117,7 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
             if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
                 try:
-                    if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger):
+                    if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, logger) and fund_xch * CONFIG["RESERVE_RATIO"] < xch_balance:
                         trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
                     elif trader.max_price / CONFIG["XCH_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / xch_price and trader.volume > 0 and current_buy_price / xch_price > trader.avg_price:
                         trader.sell_stock(xch_price, current_buy_price)
