@@ -32,7 +32,7 @@ def get_pending_sell_orders(logger):
             amount = 0
             for o in orders:
                 if o["type"] % 2 == 0:
-                    amount += o["request"] / XCH_MOJO
+                    amount += int(o["request"]) / XCH_MOJO
             return amount
         else:
             raise Exception(f"Failed to get pending ordersfor {CONFIG['FUND_ID']} {response.status_code} : {response.text}")

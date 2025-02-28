@@ -164,7 +164,7 @@ def check_pending_positions(traders, logger):
             if trader.type == StrategyType.DCA:
                 # Check if the pending buy is confirmed
                 expect_amount = trader.volume
-                amount = token_balance[STOCKS[trader.ticker]["token_id"]]["balance"]
+                amount = token_balance[STOCKS[trader.ticker]["asset_id"]]["balance"]
                 if amount - expect_amount >= -0.003:
                     trader.position_status = PositionStatus.TRADABLE.name
                     trader.volume = amount
