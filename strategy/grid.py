@@ -138,7 +138,7 @@ def execute_grid(logger):
                 last_trader = None
                 last_buy_date = None
                 for trader in traders:
-                    if trader.position_status == PositionStatus.TRADABLE.name and trader.volume > 0 and (trader.last_updated > last_buy_date or last_trader is None):
+                    if trader.position_status == PositionStatus.TRADABLE.name and trader.volume > 0 and (last_trader is None or trader.last_updated > last_buy_date):
                         last_trader = trader
                         last_buy_date = trader.last_updated
                 if last_trader is not None:
