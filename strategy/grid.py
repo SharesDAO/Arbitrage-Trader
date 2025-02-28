@@ -69,7 +69,7 @@ class GridStockTrader(StockTrader):
         record_trade(self.stock, "SELL", sell_price * xch_price, self.volume, self.total_cost, request_xch - self.total_cost)
         self.logger.info(
             f"Selling {self.volume} shares of {self.stock} at {sell_price} XCH with {request_xch - self.total_cost} XCH profit")
-        self.position_status = PositionStatus.PENDING_SELL.name
+        self.position_status = PositionStatus.PENDING_SELL.name if not liquid else PositionStatus.PENDING_LIQUIDATION.name
         self.last_updated = timestamp
 
 

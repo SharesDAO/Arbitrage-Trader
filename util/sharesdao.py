@@ -58,8 +58,9 @@ def check_cash_reserve(traders, logger):
         xch_balance = get_xch_balance()
         pending_sell_amount = 0
         for t in traders:
-            if t.position_status == PositionStatus.PENDING_SELL.name:
+            if t.position_status == PositionStatus.PENDING_LIQUIDATION.name:
                 pending_sell_amount += t.volume
+        logger.info(f"Required amount:{required_amount}, Current amount: {xch_balance + pending_sell_amount}")
         if required_amount > xch_balance + pending_sell_amount:
             return False
         else:

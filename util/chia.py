@@ -228,7 +228,7 @@ def check_pending_positions(traders, logger):
                                         break
                     except Exception as e:
                         continue
-        if trader.position_status == PositionStatus.PENDING_SELL.name:
+        if trader.position_status == PositionStatus.PENDING_SELL.name or trader.position_status == PositionStatus.PENDING_LIQUIDATION.name:
             # Check if the order is cancelled
             if STOCKS[trader.ticker]["asset_id"].lower() not in all_cat_txs:
                 all_cat_txs[STOCKS[trader.ticker]["asset_id"].lower()] = []

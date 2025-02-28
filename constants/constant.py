@@ -6,6 +6,7 @@ class PositionStatus(Enum):
     PENDING_BUY = 2
     PENDING_SELL = 3
     PENDING_CANCEL = 4
+    PENDING_LIQUIDATION = 5
 
 
 class StrategyType(Enum):
