@@ -118,7 +118,7 @@ def get_xch_txs():
             tx["memo"] = response
         except Exception as e:
             tx["memo"] = {"customer_id": "", "symbol": ""}
-    return data["received_transactions"]["transactions"]
+    return data["data"]["received_transactions"]["transactions"]
 
 
 def get_cat_txs():
