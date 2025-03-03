@@ -106,7 +106,7 @@ def get_xch_txs():
     data = response.json()
     if data["status"] != "success":
         raise Exception("Failed to get XCH transactions")
-    for tx in data["received_transactions"]["transactions"]:
+    for tx in data["data"]["received_transactions"]["transactions"]:
         tx["sent"] = 0
         tx["amount"] = tx["amount_mojo"]
         try:
@@ -134,7 +134,7 @@ def get_cat_txs():
     data = response.json()
     if data["status"] != "success":
         raise Exception("Failed to get XCH transactions")
-    for tx in data["received_transactions"]["transactions"]:
+    for tx in data["data"]["received_transactions"]["transactions"]:
         tx["sent"] = 0
         tx["amount"] = tx["token_amount"] * CAT_MOJO
         try:
