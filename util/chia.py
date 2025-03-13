@@ -317,12 +317,16 @@ def get_xch_balance():
 @cached(token_cache)
 def get_token_balance():
     url = f"https://api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
-    response = requests.get(url)
-    data = response.json()
-    if data["status"] == "success":
-        return {t["asset_id"]: t for t in data["data"]}
-    else:
-        return {}
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if data["status"] == "success":
+            return {t["asset_id"]: t for t in data["data"]}
+        else:
+            return {}
+    except Exception as e:
+        print(f"Cannot get token balance")
+        return None
 
 
 def add_token(symbol):

@@ -90,6 +90,8 @@ def execute_grid(logger):
             check_pending_positions(traders, logger)
         except Exception as e:
             logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
+            time.sleep(60)
+            continue
         if fund_xch == 0:
             fund_xch = get_fund_value(logger) / get_xch_price(logger)
         logger.info(f"Fund value: {fund_xch} XCH")
@@ -157,6 +159,10 @@ def execute_grid(logger):
             continue
         total_profit = 0
         token_balance = get_token_balance()
+        if token_balance is None:
+            logger.error("Failed to get token balance, skipping...")
+            time.sleep(60)
+            continue
         for s, stats in stocks_stats.items():
             logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Expect/Actual Volume: {stats['volume']}/{token_balance[STOCKS[s]['asset_id']]['balance']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
                         f" Balance: {stats['value']/xch_price+(1-(stats['position']+stats['buying'])/stats['grid'])*stats['invest']+stats['profit']} XCH")
