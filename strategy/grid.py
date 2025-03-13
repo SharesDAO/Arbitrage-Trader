@@ -164,7 +164,7 @@ def execute_grid(logger):
             time.sleep(60)
             continue
         for s, stats in stocks_stats.items():
-            logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Expect/Actual Volume: {stats['volume']}/{token_balance[STOCKS[s]['asset_id']]['balance']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
+            logger.info(f"Stock: {s}, Buying: {stats['buying']}, Selling: {stats['selling']}, Position Grids: {stats['position']}, Expect/Actual Volume: {stats['volume']}/{0 if STOCKS[s]['asset_id'] not in token_balance else token_balance[STOCKS[s]['asset_id']]['balance']}, Finished Arbitrages: {stats['arbitrage']}, Total Profit: {stats['profit']} XCH,"
                         f" Balance: {stats['value']/xch_price+(1-(stats['position']+stats['buying'])/stats['grid'])*stats['invest']+stats['profit']} XCH")
             total_profit += stats['profit']
         total_xch = xch_balance + stock_balance / xch_price
