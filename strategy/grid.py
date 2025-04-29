@@ -117,7 +117,7 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["volume"] += trader.volume
             stocks_stats[trader.ticker]["value"] += trader.volume * (current_sell_price+current_buy_price) /2
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
-            if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
+            if trader.position_status == PositionStatus.TRADABLE.name:
                 try:
                     if trader.max_price / CONFIG["XCH_MIN"] - trader.index * trader.grid_width >= current_sell_price / xch_price and trader.volume == 0 and check_cash_reserve(traders, fund_xch, True, logger):
                         trader.buy_stock(fund_xch * trader.invested_xch * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, xch_price, current_sell_price)
