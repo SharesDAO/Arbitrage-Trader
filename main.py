@@ -11,8 +11,8 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.chia import get_xch_price, sign_message
-from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
+from util.chia import get_crypto_price, sign_message
+from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus, CURRENCY
 from util.db import update_position
 from util.stock import get_stock_price
 
@@ -29,9 +29,8 @@ def cli():
     pass
 
 
-def load_config(wallet: int, did: str, strategy: str):
-    CONFIG["WALLET_FINGERPRINT"] = wallet
-    CONFIG["DID_HEX"] = did[2:] if did.startswith("0x") else did
+def load_config(wallet: str, did: str, strategy: str):
+
     now = calendar.timegm(time.gmtime())
     signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
     req = {"did_id": CONFIG["DID_HEX"], "timestamp": now, "signature": signature}
@@ -41,6 +40,13 @@ def load_config(wallet: int, did: str, strategy: str):
     if response.status_code == 200:
         strategy = json.loads(response.json()["trading_strategy"])[strategy]
         CONFIG["ADDRESS"] = response.json()["address"]
+        if response.json()["coin_id"] == 'SOLANA':
+            CONFIG["BLOCKCHAIN"] = "SOLANA"
+
+        else:
+            CONFIG["BLOCKCHAIN"] = "CHIA"
+            CONFIG["WALLET_FINGERPRINT"] = int(wallet)
+            CONFIG["DID_HEX"] = did[2:] if did.startswith("0x") else did
         CONFIG.update(strategy)
         logger.info(f"Loaded user trading strategy: {CONFIG}")
     else:
@@ -53,7 +59,7 @@ def load_config(wallet: int, did: str, strategy: str):
     "-w",
     "--wallet",
     help="Your Chia wallet Fingerprint.",
-    type=int,
+    type=str,
     required=True
 )
 @click.option(
@@ -70,7 +76,7 @@ def load_config(wallet: int, did: str, strategy: str):
     type=str,
     required=True
 )
-def run(wallet: int, did: str, strategy: str):
+def run(wallet: str, did: str, strategy: str):
     if strategy.lower() == "dca":
         load_config(wallet, did, StrategyType.DCA.value)
         execute_dca(logger)
@@ -85,7 +91,7 @@ def run(wallet: int, did: str, strategy: str):
     "-w",
     "--wallet",
     help="Your Chia wallet Fingerprint.",
-    type=int,
+    type=str,
     required=True
 )
 @click.option(
@@ -109,12 +115,12 @@ def run(wallet: int, did: str, strategy: str):
     type=str,
     required=True
 )
-def liquidate(wallet: int, did: str, ticker: str, strategy: str):
+def liquidate(wallet: str, did: str, ticker: str, strategy: str):
     load_config(wallet, did, strategy.upper())
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)
         if stock.volume >= 0:
-            xch_price = get_xch_price(logger)
+            xch_price = get_crypto_price(CURRENCY[CONFIG["BLOCKCHAIN"]], logger)
             stock_price = get_stock_price(stock.stock, logger)[0]
             stock.sell_stock(xch_price, stock_price, True)
             update_position(stock)
@@ -123,7 +129,7 @@ def liquidate(wallet: int, did: str, ticker: str, strategy: str):
     if strategy.lower() == "grid":
         for stock in CONFIG["TRADING_SYMBOLS"]:
             if stock["TICKER"] == ticker:
-                xch_price = get_xch_price(logger)
+                xch_price = get_crypto_price(CURRENCY[CONFIG["BLOCKCHAIN"]], logger)
                 stock_price = get_stock_price(ticker, logger)[0]
                 for i in range(stock["GRID_NUM"]):
                     grid = GridStockTrader(i, stock, logger)
@@ -147,7 +153,7 @@ def liquidate(wallet: int, did: str, ticker: str, strategy: str):
     "-w",
     "--wallet",
     help="Your Chia wallet Fingerprint.",
-    type=int,
+    type=str,
     required=True
 )
 @click.option(
@@ -164,7 +170,7 @@ def liquidate(wallet: int, did: str, ticker: str, strategy: str):
     type=str,
     required=True
 )
-def reset(volume: str, wallet: int, ticker: str, strategy: str):
+def reset(volume: str, wallet: str, ticker: str, strategy: str):
     CONFIG["WALLET_FINGERPRINT"] = wallet
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)

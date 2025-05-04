@@ -20,6 +20,7 @@ CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
 
+
 def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
     if wallet_id == 1:
         offer_amount = int(offer * XCH_MOJO)
@@ -347,13 +348,13 @@ def add_token(symbol):
 
 
 @cached(price_cache)
-def get_xch_price(logger):
-    url = f"https://api.sharesdao.com:8443/util/get_price/XCH"
+def get_crypto_price(symbol, logger):
+    url = f"https://api.sharesdao.com:8443/util/get_price/{symbol}"
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
         if response.status_code == 200:
-            return response.json()["XCH"]
+            return response.json()[symbol]
         else:
             logger.error(f"Error: {response.status_code}")
             return None
