@@ -4,3 +4,6 @@ yfinance
 pytz
 click
 chia-blockchain
+solana
+base58
+solders

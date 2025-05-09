@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.chia import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade
+from util.crypto import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade

@@ -1,9 +1,9 @@
 import time
 from datetime import datetime
 
-from util.chia import add_token
+from util.crypto import add_token
 from constants.constant import PositionStatus
-
+from constants.constant import CONFIG
 
 
 class StockTrader:
@@ -22,8 +22,9 @@ class StockTrader:
         self.last_updated = datetime.now()
         self.load_position()
         # Check if stock token is added to Chia wallet
-        self.wallet_id = add_token(self.ticker)
-        logger.info(f"{self.ticker} wallet ID: {self.wallet_id}")
+        if CONFIG["BLOCKCHAIN"] == "CHIA":
+            self.wallet_id = add_token(self.ticker)
+            logger.info(f"{self.ticker} wallet ID: {self.wallet_id}")
 
     def load_position(self):
         pass

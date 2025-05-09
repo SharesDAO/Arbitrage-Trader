@@ -4,7 +4,7 @@ import requests
 from cachetools import TTLCache, cached
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
-from util.chia import XCH_MOJO, get_xch_balance, get_xch_price
+from util.crypto import XCH_MOJO, get_xch_balance, get_xch_price
 
 order_cache = TTLCache(maxsize=100, ttl=40)
 
@@ -25,7 +25,7 @@ def get_pool_by_id(pool_id):
 def get_pending_sell_orders(logger):
     url = f"https://api.sharesdao.com:8443/transaction/pool"
     try:
-        input_data = {"pool_id": CONFIG["FUND_ID"], "status": 2, "start_index": 0, "num_of_transactions": 200}
+        input_data = {"pool_id": CONFIG["POOL_ID"], "status": 2, "start_index": 0, "num_of_transactions": 200}
         response = requests.post(url, json=input_data, timeout=REQUEST_TIMEOUT)
         if response.status_code == 200:
             orders = response.json()
@@ -35,21 +35,21 @@ def get_pending_sell_orders(logger):
                     amount += int(o["request"]) / XCH_MOJO
             return amount
         else:
-            raise Exception(f"Failed to get pending ordersfor {CONFIG['FUND_ID']} {response.status_code} : {response.text}")
+            raise Exception(f"Failed to get pending ordersfor {CONFIG['POOL_ID']} {response.status_code} : {response.text}")
     except Exception as e:
         raise e
 
 
 def get_fund_value(logger):
     try:
-        pool = get_pool_by_id(CONFIG["FUND_ID"])
+        pool = get_pool_by_id(CONFIG["POOL_ID"])
         data = json.loads(pool["description"])
         usd_value = 0
         for asset in data["assets"]:
             usd_value += asset["value"]
         return usd_value
     except Exception as e:
-        logger.error(f"Failed to get fund value {CONFIG['FUND_ID']}. {e}")
+        logger.error(f"Failed to get fund value {CONFIG['POOL_ID']}. {e}")
         return 0
 
 def check_cash_reserve(traders, fund_xch, is_buy, logger):
