@@ -4,7 +4,7 @@ import requests
 from cachetools import TTLCache, cached
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
-from util.crypto import XCH_MOJO, get_xch_balance, get_xch_price
+from util.crypto import XCH_MOJO, get_crypto_balance, get_crypto_price
 
 order_cache = TTLCache(maxsize=100, ttl=40)
 
@@ -55,9 +55,9 @@ def get_fund_value(logger):
 def check_cash_reserve(traders, fund_xch, is_buy, logger):
     try:
         required_amount = get_pending_sell_orders(logger)
-        xch_balance = get_xch_balance()
+        xch_balance = get_crypto_balance()
         pending_sell_amount = 0
-        xch_price = get_xch_price(logger)
+        xch_price = get_crypto_price(logger)
         for t in traders:
             if t.position_status == PositionStatus.PENDING_LIQUIDATION.name:
                 pending_sell_amount += t.volume * t.current_price / xch_price

@@ -6,7 +6,7 @@ from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
 cache = TTLCache(maxsize=100, ttl=20)
 clock = TTLCache(maxsize=1, ttl=60)
 
-def get_pool_list():
+def get_pool_list(blockchain):
     url = "https://api.sharesdao.com:8443/pool/list"
     try:
         response = requests.post(url, timeout=REQUEST_TIMEOUT, json={"type": 2})
@@ -15,14 +15,15 @@ def get_pool_list():
             stocks = response.json()
             pools = {}
             for s in stocks:
-                pools[s["symbol"]] = {"asset_id": s["token_id"], "buy_addr": s["mint_address"], "sell_addr": s["burn_address"], "pool_id": s["pool_id"]}
+                if s["blockchain"] == blockchain: 
+                    pools[s["symbol"]] = {"blockchain":s["blockchain"], "asset_id": s["token_id"], "buy_addr": s["mint_address"], "sell_addr": s["burn_address"], "pool_id": s["pool_id"]}
             return pools
         else:
             raise Exception(f"Failed to get stock pools list {response.status_code}")
     except Exception as e:
         raise e
 
-STOCKS = get_pool_list()
+STOCKS = {}
 
 @cached(clock)
 def is_market_open(logger) -> bool:

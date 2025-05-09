@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.crypto import get_xch_price, get_xch_balance, add_token, check_pending_positions, trade
+from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, trade
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
@@ -94,7 +94,7 @@ def execute_dca(logger):
     traders = [DCAStockTrader(stock, logger) for stock in CONFIG["TRADING_SYMBOLS"]]
 
     while True:
-        xch_price = get_xch_price(logger)
+        xch_price = get_crypto_price(logger)
         if xch_price is None:
             logger.error("Failed to get XCH price, skipping...")
             time.sleep(60)
@@ -133,7 +133,7 @@ def execute_dca(logger):
             update_position(trader)
 
         # Get XCH balance
-        xch_balance = get_xch_balance()
+        xch_balance = get_crypto_balance()
         total_xch = xch_balance + stock_balance / xch_price
         logger.info(
             f"Total Stock Balance: {stock_balance} USD, Total XCH Balance: {xch_balance} XCH, XCH In Total: {total_xch} XCH, profit in XCH: {(total_xch / CONFIG['INVESTED_XCH'] - 1) * 100:.2f}%, profit in USD: {(total_xch * xch_price / CONFIG['INVESTED_USD'] - 1) * 100:.2f}%")
