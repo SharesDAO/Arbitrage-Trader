@@ -22,6 +22,7 @@ from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_s
     DEFAULT_HIDDEN_PUZZLE_HASH
 from chia_rs import PrivateKey, AugSchemeMPL
 from solders.solders import Signature
+from spl.token.instructions import get_associated_token_address
 
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
@@ -100,20 +101,21 @@ def get_xch_txs():
     return data["received_transactions"]["transactions"]
 
 
-def get_sol_txs():
+def get_sol_txs(logger):
     try:
         client = Client(SOLANA_URL)
-        
+        last_tx = None if "SOL" not in last_checked_tx else last_checked_tx["SOL"]
         # Get recent confirmed signatures for transactions involving this wallet
         response = client.get_signatures_for_address(
             Pubkey.from_string(CONFIG['ADDRESS']),
-            limit=100,
+            limit=50,
+            until=last_tx,
             commitment=Commitment("confirmed")
         )
         
         if not response.value:
             return []
-            
+        last_checked_tx["SOL"] = response.value[0].signature
         transactions = []
         
         # For each signature, get the full transaction details
@@ -177,7 +179,7 @@ def get_sol_txs():
                     else:
                         tx["sent"] = 0
                     transactions.append(tx)
-        
+        logger.info(f"Found {len(transactions)} SOL transactions")
         return transactions
     except Exception as e:
         print(f"Failed to get SOL transactions: {str(e)}")
@@ -215,106 +217,92 @@ def get_cat_txs():
     return cat_txs
 
 
-def get_spl_token_txs():
+def get_spl_token_txs(logger):
     try:
         client = Client(SOLANA_URL)
-        token_balance = get_token_balance()
         token_txs = {}
-        
         # For each token in the balance, get its transactions
-        for token_mint, token_info in token_balance.items():
-            # Get token accounts for this mint and owner
-            token_accounts_response = client.get_token_accounts_by_owner(
-                Pubkey.from_string(CONFIG['ADDRESS']),
-                TokenAccountOpts(mint=Pubkey.from_string(token_mint))
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            token_mint = STOCKS[stock["TICKER"]]["asset_id"].lower()
+            token_txs[token_mint] = []
+            account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']), Pubkey.from_string(token_mint))
+            last_tx = None if token_mint not in last_checked_tx else last_checked_tx[token_mint]
+            # Get transaction signatures for this token account
+            sigs_response = client.get_signatures_for_address(
+                account_pubkey,
+                limit=50,
+                until=last_tx,
+                commitment=Commitment("confirmed")
             )
-            
-            if not token_accounts_response.value:
+
+            if not sigs_response.value:
                 continue
-                
-            token_txs[token_mint.lower()] = []
-            
-            # For each token account, get its transaction history
-            for token_account in token_accounts_response.value:
-                account_pubkey = token_account.pubkey
-                
-                # Get transaction signatures for this token account
-                sigs_response = client.get_signatures_for_address(
-                    account_pubkey,
-                    limit=50,
-                    commitment=Commitment("confirmed")
+            last_checked_tx[token_mint] = sigs_response.value[0].signature
+            # Process each transaction
+            for sig_info in sigs_response.value:
+                tx_response = client.get_transaction(
+                    sig_info.signature,
+                    commitment=Commitment("confirmed"),
+                    max_supported_transaction_version=0
                 )
-                
-                if not sigs_response.value:
+
+                if not tx_response.value:
                     continue
-                    
-                # Process each transaction
-                for sig_info in sigs_response.value:
-                    tx_response = client.get_transaction(
-                        sig_info.signature,
-                        commitment=Commitment("confirmed"),
-                        max_supported_transaction_version=0
-                    )
-                    
-                    if not tx_response.value:
-                        continue
-                        
-                    tx_data = tx_response.value
-                    
-                    # Create a transaction object similar to Chia's CAT transactions
 
-                    
-                    if tx_data:
-                        tx = {
-                            "signature": sig_info.signature,
-                            "sent": 0,  # Assuming it's received
-                            "asset_id": token_mint,
-                            "amount": 0,
-                            "memo": None,
-                            "timestamp": sig_info.block_time if sig_info.block_time else 0,
-                            "slot": sig_info.slot
-                        }
-                        # Look through the transaction instructions
-                        if tx_data.transaction.meta and tx_data.transaction.transaction.message.instructions:
-                            message = tx_data.transaction.transaction.message
-                            for instruction in message.instructions:
-                                # The Memo Program ID
-                                if str(message.account_keys[instruction.program_id_index]) == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
-                                    # Decode the memo data
-                                    try:
-                                        memo_data = base58.b58decode(instruction.data)
-                                        tx["memo"] = json.loads(memo_data.decode('utf-8'))
-                                    except Exception as e:
-                                        raise Exception(f"Failed to decode memo data: {str(e)}")
-                                if str(message.account_keys[instruction.program_id_index]) == "11111111111111111111111111111111" and len(instruction.data) >= 12:  # System Program ID
-                                    # First 4 bytes are instruction type
-                                    parsed_data = base58.b58decode(instruction.data)
-                                    instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
+                tx_data = tx_response.value
 
-                                    # Check if it's a transfer instruction (type 2)
-                                    if instruction_type == 2:
-                                        # Extract lamports from bytes 4-12
-                                        tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
-                                # Get token amount from token program
-                                if str(message.account_keys[instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
-                                    # First 4 bytes are instruction type
-                                    parsed_data = base58.b58decode(instruction.data)
-                                    instruction_type = parsed_data[0]
-                                    # Check if it's a transfer instruction (type 2)
-                                    if instruction_type == 3 or instruction_type == 12:
-                                        tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
-                        if tx["memo"] and "customer_id" in tx["memo"] > 0:
-                            if "did_id" in tx["memo"]:
-                                tx["sent"] = 1
-                            else:
-                                tx["sent"] = 0
-                            if token_mint in token_txs:
-                                token_txs[token_mint].append(tx)
-                            else:
-                                token_txs[token_mint] = [tx]
+                # Create a transaction object similar to Chia's CAT transactions
+
+
+                if tx_data:
+                    tx = {
+                        "signature": sig_info.signature,
+                        "sent": 0,  # Assuming it's received
+                        "asset_id": token_mint,
+                        "amount": 0,
+                        "memo": None,
+                        "timestamp": sig_info.block_time if sig_info.block_time else 0,
+                        "slot": sig_info.slot
+                    }
+                    # Look through the transaction instructions
+                    if tx_data.transaction.meta and tx_data.transaction.transaction.message.instructions:
+                        message = tx_data.transaction.transaction.message
+                        for instruction in message.instructions:
+                            # The Memo Program ID
+                            if str(message.account_keys[instruction.program_id_index]) == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
+                                # Decode the memo data
+                                try:
+                                    memo_data = base58.b58decode(instruction.data)
+                                    tx["memo"] = json.loads(memo_data.decode('utf-8'))
+                                except Exception as e:
+                                    raise Exception(f"Failed to decode memo data: {str(e)}")
+                            if str(message.account_keys[instruction.program_id_index]) == "11111111111111111111111111111111" and len(instruction.data) >= 12:  # System Program ID
+                                # First 4 bytes are instruction type
+                                parsed_data = base58.b58decode(instruction.data)
+                                instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
+
+                                # Check if it's a transfer instruction (type 2)
+                                if instruction_type == 2:
+                                    # Extract lamports from bytes 4-12
+                                    tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
+                            # Get token amount from token program
+                            if str(message.account_keys[instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                                # First 4 bytes are instruction type
+                                parsed_data = base58.b58decode(instruction.data)
+                                instruction_type = parsed_data[0]
+                                # Check if it's a transfer instruction (type 2)
+                                if instruction_type == 3 or instruction_type == 12:
+                                    tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
+                    if tx["memo"] and "customer_id" in tx["memo"] > 0:
+                        if "did_id" in tx["memo"]:
+                            tx["sent"] = 1
+                        else:
+                            tx["sent"] = 0
+                        token_txs[token_mint].append(tx)
+        logger.info(f"Found {len(token_txs)} SPL token transactions")
         return token_txs
     except Exception as e:
-        print(f"Failed to get SPL token transactions: {str(e)}")
+        logger.error(f"Failed to get SPL token transactions: {str(e)}")
         return {}
 
 
@@ -323,11 +311,11 @@ def check_pending_positions(traders, logger):
     
     # Get transactions based on blockchain type
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
-        crypto_txs = get_sol_txs()
-        all_token_txs = get_spl_token_txs()
+        crypto_txs = get_sol_txs(logger)
+        all_token_txs = get_spl_token_txs(logger)
         logger.info(f"Fetched {len(crypto_txs)} SOL txs.")
         SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
-        token_divisor = 1  # SPL tokens amounts are already adjusted in get_spl_token_txs
+        token_divisor = 1_000_000_000
     else:
         crypto_txs = get_xch_txs()
         all_token_txs = get_cat_txs()
@@ -375,7 +363,7 @@ def check_pending_positions(traders, logger):
                 if tx["sent"] == 0:
                     try:
                         # Check if the order is cancelled
-                        logger.debug(f"Checking buy cancellation:{tx['memo']}")
+                        logger.info(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                             if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
                                     trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
@@ -405,6 +393,7 @@ def check_pending_positions(traders, logger):
                                         logger.info(f"Buy {trader.stock} cancelled")
                                         break
                     except Exception as e:
+                        logger.error(f"Failed to check buy cancellation: {str(e)}")
                         continue
         if trader.position_status == PositionStatus.PENDING_SELL.name or trader.position_status == PositionStatus.PENDING_LIQUIDATION.name:
             # Check if the order is cancelled
