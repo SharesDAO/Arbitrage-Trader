@@ -15,7 +15,7 @@ from util.crypto import get_crypto_price, sign_message_by_key
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
 from util.sharesdao import get_pool_by_id
-from util.stock import STOCKS, get_stock_price
+from util.stock import STOCKS, get_stock_price, get_pool_list
 
 logger = logging.getLogger("Rotating Log")
 logger.setLevel(logging.INFO)
@@ -34,10 +34,8 @@ def load_config(strategy: str):
     CONFIG["POOL_ID"] = os.environ["SHARESDAO_FUND_POOL_ID"]
     pool = get_pool_by_id(CONFIG["POOL_ID"])
     CONFIG["BLOCKCHAIN"] = "CHIA" if pool["blockchain"] == 1 else "SOLANA"
-    # Exclude stocks that are not supported by the current blockchain in a for loop
-    for stock in STOCKS:
-        if stock["blockchain"] != pool["blockchain"]:
-            STOCKS.remove(stock)
+    STOCKS.update(get_pool_list(pool["blockchain"]))
+    logger.info(f"Found {len(STOCKS)} stocks for blockchain {CONFIG['BLOCKCHAIN']}")
     CONFIG["CURRENCY"] = "XCH" if pool["currency"] == 1 else "SOL"
     now = calendar.timegm(time.gmtime())
     signature = sign_message_by_key(f"SharesDAO|Login|{now}")
@@ -46,15 +44,16 @@ def load_config(strategy: str):
     logger.info(f"Loading trading stategy {strategy} for user {pool['owner_did']}")
     response = requests.post(url, data=json.dumps(req), timeout=REQUEST_TIMEOUT)
     if response.status_code == 200:
-        strategy = json.loads(response.json()["trading_strategy"])[strategy]
-        CONFIG.update(strategy)
-        if strategy == "DCA":
+        strategy_dict = json.loads(response.json()["trading_strategy"])[strategy]
+        CONFIG.update(strategy_dict)
+        if strategy == "GRID":
             if CONFIG["BLOCKCHAIN"] == "CHIA":
                 CONFIG["CRYPTO_MIN"] = CONFIG["XCH_MIN"]
                 CONFIG["CRYPTO_MAX"] = CONFIG["XCH_MAX"]
             elif CONFIG["BLOCKCHAIN"] == "SOLANA":
                 CONFIG["CRYPTO_MIN"] = CONFIG["SOL_MIN"]
                 CONFIG["CRYPTO_MAX"] = CONFIG["SOL_MAX"]
+
         logger.info(f"Loaded user trading strategy: {CONFIG}")
         data = json.loads(pool["description"])
         CONFIG["ADDRESS"] = data["address"]
