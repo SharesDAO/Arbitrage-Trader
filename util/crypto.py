@@ -3,9 +3,12 @@ import datetime
 import json
 import os
 import re
+import struct
 import subprocess
 import time
 from datetime import datetime
+
+import base58
 import requests
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
@@ -18,6 +21,7 @@ from chia.types.signing_mode import CHIP_0002_SIGN_MESSAGE_PREFIX
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_secret_key, \
     DEFAULT_HIDDEN_PUZZLE_HASH
 from chia_rs import PrivateKey, AugSchemeMPL
+from solders.solders import Signature
 
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
@@ -34,7 +38,7 @@ CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
 SOLANA_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-
+MAX_RETRIES = 3
 def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
     now = calendar.timegm(time.gmtime())
     inputs = {
@@ -124,48 +128,55 @@ def get_sol_txs():
                 continue
                 
             tx_data = tx_response.value
-            
-            # Create a transaction object with similar structure to Chia transactions
-            tx = {
-                "signature": sig_info.signature,
-                "sent": 0,  # Assume it's a received transaction
-                "amount": 0,
-                "memo": {"customer_id": "", "symbol": ""},
-                "timestamp": sig_info.block_time if sig_info.block_time else 0,
-                "slot": sig_info.slot
-            }
-            
-            # Extract transaction amount and memo if available
-            if tx_data.meta and tx_data.meta.pre_balances and tx_data.meta.post_balances:
-                # Calculate the balance change for the account
-                account_index = None
-                for i, key in enumerate(tx_data.transaction.message.account_keys):
-                    if key.to_string() == CONFIG['ADDRESS']:
-                        account_index = i
-                        break
-                
-                if account_index is not None:
-                    pre_balance = tx_data.meta.pre_balances[account_index]
-                    post_balance = tx_data.meta.post_balances[account_index]
-                    tx["amount"] = (post_balance - pre_balance) / 1_000_000_000  # Convert lamports to SOL
-            
-            # Extract memo if available
-            if tx_data.transaction.message.instructions:
-                for ix in tx_data.transaction.message.instructions:
-                    # Check if instruction is for Memo Program
-                    if isinstance(ix.program_id, Pubkey) and ix.program_id.to_string() == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
-                        # Decode the memo data
-                        try:
-                            memo_data = bytes(ix.data).decode('utf-8')
-                            # Try to parse as JSON
+
+            if tx_data:
+                tx = {
+                    "signature": sig_info.signature,
+                    "sent": 0,  # Assuming it's received
+                    "amount": 0,
+                    "memo": None,
+                    "timestamp": sig_info.block_time if sig_info.block_time else 0,
+                    "slot": sig_info.slot
+                }
+                # Look through the transaction instructions
+                if tx_data.transaction.meta and tx_data.transaction.transaction.message.instructions:
+                    message = tx_data.transaction.transaction.message
+                    for instruction in message.instructions:
+                        # The Memo Program ID
+                        if str(message.account_keys[
+                                   instruction.program_id_index]) == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
+                            # Decode the memo data
                             try:
-                                tx["memo"] = json.loads(memo_data)
-                            except:
-                                tx["memo"] = {"data": memo_data}
-                        except:
-                            pass
-            
-            transactions.append(tx)
+                                memo_data = base58.b58decode(instruction.data)
+                                tx["memo"] = json.loads(memo_data.decode('utf-8'))
+                            except Exception as e:
+                                raise Exception(f"Failed to decode memo data: {str(e)}")
+                        if str(message.account_keys[
+                                   instruction.program_id_index]) == "11111111111111111111111111111111" and len(
+                                instruction.data) >= 12:  # System Program ID
+                            # First 4 bytes are instruction type
+                            parsed_data = base58.b58decode(instruction.data)
+                            instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
+
+                            # Check if it's a transfer instruction (type 2)
+                            if instruction_type == 2:
+                                # Extract lamports from bytes 4-12
+                                tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
+                        # Get token amount from token program
+                        if str(message.account_keys[
+                                   instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                            # First 4 bytes are instruction type
+                            parsed_data = base58.b58decode(instruction.data)
+                            instruction_type = parsed_data[0]
+                            # Check if it's a transfer instruction (type 2)
+                            if instruction_type == 3 or instruction_type == 12:
+                                tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
+                if tx["memo"] and "customer_id" in tx["memo"]:
+                    if "did_id" in tx["memo"]:
+                        tx["sent"] = 1
+                    else:
+                        tx["sent"] = 0
+                    transactions.append(tx)
         
         return transactions
     except Exception as e:
@@ -251,54 +262,56 @@ def get_spl_token_txs():
                     tx_data = tx_response.value
                     
                     # Create a transaction object similar to Chia's CAT transactions
-                    tx = {
-                        "signature": sig_info.signature,
-                        "sent": 0,  # Assuming it's received
-                        "asset_id": token_mint,
-                        "amount": 0,
-                        "memo": {"customer_id": "", "symbol": ""},
-                        "timestamp": sig_info.block_time if sig_info.block_time else 0,
-                        "slot": sig_info.slot
-                    }
+
                     
-                    # Find token transfer amount by analyzing the transaction
-                    if tx_data.meta and tx_data.meta.post_token_balances and tx_data.meta.pre_token_balances:
-                        # Look for the relevant token account's balance change
-                        pre_balance = None
-                        post_balance = None
-                        
-                        for token_balance in tx_data.meta.pre_token_balances:
-                            if token_balance.owner == CONFIG['ADDRESS'] and token_balance.mint == token_mint:
-                                pre_balance = int(token_balance.ui_token_amount.amount) if token_balance.ui_token_amount.amount else 0
-                                break
-                                
-                        for token_balance in tx_data.meta.post_token_balances:
-                            if token_balance.owner == CONFIG['ADDRESS'] and token_balance.mint == token_mint:
-                                post_balance = int(token_balance.ui_token_amount.amount) if token_balance.ui_token_amount.amount else 0
-                                break
-                        
-                        if pre_balance is not None and post_balance is not None:
-                            tx["amount"] = (post_balance - pre_balance)  # Already in token units (like CAT_MOJO)
-                    
-                    # Extract memo if available (same logic as in get_sol_txs)
-                    if tx_data.transaction.message.instructions:
-                        for ix in tx_data.transaction.message.instructions:
-                            # Check if instruction is for Memo Program
-                            if isinstance(ix.program_id, Pubkey) and ix.program_id.to_string() == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
-                                try:
-                                    memo_data = bytes(ix.data).decode('utf-8')
-                                    # Try to parse as JSON
+                    if tx_data:
+                        tx = {
+                            "signature": sig_info.signature,
+                            "sent": 0,  # Assuming it's received
+                            "asset_id": token_mint,
+                            "amount": 0,
+                            "memo": None,
+                            "timestamp": sig_info.block_time if sig_info.block_time else 0,
+                            "slot": sig_info.slot
+                        }
+                        # Look through the transaction instructions
+                        if tx_data.transaction.meta and tx_data.transaction.transaction.message.instructions:
+                            message = tx_data.transaction.transaction.message
+                            for instruction in message.instructions:
+                                # The Memo Program ID
+                                if str(message.account_keys[instruction.program_id_index]) == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
+                                    # Decode the memo data
                                     try:
-                                        tx["memo"] = json.loads(memo_data)
-                                    except:
-                                        tx["memo"] = {"data": memo_data}
-                                except:
-                                    pass
-                    
-                    # Only add transactions with actual token transfers
-                    if tx["amount"] != 0:
-                        token_txs[token_mint.lower()].append(tx)
-        
+                                        memo_data = base58.b58decode(instruction.data)
+                                        tx["memo"] = json.loads(memo_data.decode('utf-8'))
+                                    except Exception as e:
+                                        raise Exception(f"Failed to decode memo data: {str(e)}")
+                                if str(message.account_keys[instruction.program_id_index]) == "11111111111111111111111111111111" and len(instruction.data) >= 12:  # System Program ID
+                                    # First 4 bytes are instruction type
+                                    parsed_data = base58.b58decode(instruction.data)
+                                    instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
+
+                                    # Check if it's a transfer instruction (type 2)
+                                    if instruction_type == 2:
+                                        # Extract lamports from bytes 4-12
+                                        tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
+                                # Get token amount from token program
+                                if str(message.account_keys[instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                                    # First 4 bytes are instruction type
+                                    parsed_data = base58.b58decode(instruction.data)
+                                    instruction_type = parsed_data[0]
+                                    # Check if it's a transfer instruction (type 2)
+                                    if instruction_type == 3 or instruction_type == 12:
+                                        tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
+                        if tx["memo"] and "customer_id" in tx["memo"] > 0:
+                            if "did_id" in tx["memo"]:
+                                tx["sent"] = 1
+                            else:
+                                tx["sent"] = 0
+                            if token_mint in token_txs:
+                                token_txs[token_mint].append(tx)
+                            else:
+                                token_txs[token_mint] = [tx]
         return token_txs
     except Exception as e:
         print(f"Failed to get SPL token transactions: {str(e)}")
@@ -581,7 +594,6 @@ def get_coin_info(coin_id, logger):
         return None
 
 
-
 def sign_message_by_wallet(did, message):
     try:
         did_id = encode_puzzle_hash(did, "did:chia:")
@@ -593,6 +605,7 @@ def sign_message_by_wallet(did, message):
     except Exception as e:
         print(f"Cannot sign message {message} with DID {did}")
         raise e
+
 
 def sign_message_by_key(message):
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
