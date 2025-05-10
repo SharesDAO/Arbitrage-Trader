@@ -152,7 +152,7 @@ def get_sol_txs(logger):
                                 memo_data = base58.b58decode(instruction.data)
                                 tx["memo"] = json.loads(memo_data.decode('utf-8'))
                             except Exception as e:
-                                raise Exception(f"Failed to decode memo data: {str(e)}")
+                                continue
                         if str(message.account_keys[
                                    instruction.program_id_index]) == "11111111111111111111111111111111" and len(
                                 instruction.data) >= 12:  # System Program ID
@@ -275,7 +275,7 @@ def get_spl_token_txs(logger):
                                     memo_data = base58.b58decode(instruction.data)
                                     tx["memo"] = json.loads(memo_data.decode('utf-8'))
                                 except Exception as e:
-                                    raise Exception(f"Failed to decode memo data: {str(e)}")
+                                    continue
                             if str(message.account_keys[instruction.program_id_index]) == "11111111111111111111111111111111" and len(instruction.data) >= 12:  # System Program ID
                                 # First 4 bytes are instruction type
                                 parsed_data = base58.b58decode(instruction.data)
