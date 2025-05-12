@@ -144,6 +144,7 @@ def execute_dca(logger):
                 f"{trader.stock}: Current Price: {trader.current_price / crypto_price} {CONFIG['CURRENCY']}, Average Price: {trader.avg_price} {CONFIG['CURRENCY']}, Profit: {trader.profit * 100:.2f}%, Bought Count: {trader.buy_count}, Value: {trader.volume * trader.current_price}, Status: {trader.position_status}")
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
+            time.sleep(3)
 
         # Get crypto balance
         crypto_balance = get_crypto_balance()

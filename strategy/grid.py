@@ -153,6 +153,7 @@ def execute_grid(logger):
                     stocks_stats[trader.ticker]["selling"] += 1
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
+            time.sleep(3)
 
         # Get crypto balance
         crypto_balance = get_crypto_balance()
