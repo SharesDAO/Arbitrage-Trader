@@ -11,7 +11,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import get_crypto_price, sign_message_by_key
+from util.crypto import get_crypto_price, sign_message
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
 from util.stock import STOCKS, get_pool_list, get_stock_price
@@ -46,9 +46,9 @@ def load_config(did: str, strategy: str, blockchain: str = "CHIA", wallet: int =
     now = calendar.timegm(time.gmtime())
     
     if blockchain == "CHIA":
-        signature = sign_message_by_key(f"SharesDAO|Login|{now}", did=CONFIG["DID_HEX"])
+        signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
     else:  # SOLANA
-        signature = sign_message_by_key(f"SharesDAO|Login|{now}")
+        signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
     
     req = {"did_id": CONFIG["DID_HEX"], "timestamp": now, "signature": signature}
     url = "https://www.sharesdao.com:8443/user/get"

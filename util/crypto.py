@@ -588,7 +588,7 @@ def get_token_balance():
 def send_sol(address: str, order, logger):
     try:
         client = Client(SOLANA_URL)
-        private_key = Keypair.from_bytes(bytes.fromhex(os.environ.get("DID_PRIVATE_KEY", "")))
+        private_key = Keypair.from_base58_string(os.environ.get("DID_PRIVATE_KEY", ""))
         sender_pubkey = private_key.pubkey()
         offer = int(order["offer"] * SOLANA_DECIAML)
         request = int(order["request"] * SOLANA_DECIAML)
@@ -662,7 +662,7 @@ def create_transfer_token_instruction(
 def send_token(address: str, order, token_mint: str, logger):
     try:
         client = Client(SOLANA_URL)
-        private_key = Keypair.from_bytes(bytes.fromhex(os.environ.get("DID_PRIVATE_KEY", "")))
+        private_key = Keypair.from_base58_string(os.environ.get("DID_PRIVATE_KEY", ""))
         sender_pubkey = private_key.pubkey()
         mint_pubkey = Pubkey.from_string(token_mint)
         offer = int(order["offer"] * SOLANA_DECIAML)
@@ -775,7 +775,7 @@ def sign_message(did, message):
             signature = json.loads(response)
             return signature["signature"]
         elif CONFIG["BLOCKCHAIN"] == "SOLANA":
-            private_key = Keypair.from_bytes(bytes.fromhex(os.environ.get("DID_PRIVATE_KEY", "")))
+            private_key = Keypair.from_base58_string(os.environ.get("DID_PRIVATE_KEY", ""))
             return private_key.sign_message(message.encode("utf-8")).to_bytes().hex()
     except Exception as e:
         print(f"Cannot sign message {message} with DID {did}")
