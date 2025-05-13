@@ -163,7 +163,7 @@ def get_sol_txs(logger):
                             if instruction_type == 2:
                                 # Extract lamports from bytes 4-12
                                 tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
-                if tx["memo"] and "customer_id" in tx["memo"]:
+                if tx["memo"] and "customer_id" in tx["memo"] and tx["amount"] > 0:
                     if "did_id" in tx["memo"]:
                         tx["sent"] = 1
                     else:
@@ -272,7 +272,7 @@ def get_spl_token_txs(logger):
                                 parsed_data = base58.b58decode(instruction.data)
                                 # Check if it's a transfer instruction (type 2)
                                 tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
-                    if tx["memo"] and "customer_id" in tx["memo"]:
+                    if tx["memo"] and "customer_id" in tx["memo"] and tx["amount"] > 0:
                         if "did_id" in tx["memo"]:
                             tx["sent"] = 1
                         else:
