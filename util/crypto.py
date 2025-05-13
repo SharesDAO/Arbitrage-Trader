@@ -24,6 +24,7 @@ from chia_rs import PrivateKey, AugSchemeMPL
 from solders.solders import Signature
 from spl.token.instructions import get_associated_token_address
 
+from main import logger
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
 from util.db import update_position, get_last_trade, delete_trade
@@ -500,6 +501,49 @@ def get_crypto_balance():
             return None
 
 
+def call_solana_rpc(method, params=None):
+    """
+    Call a Solana RPC method using requests.
+
+    Args:
+        method (str): RPC method name (e.g., "getTokenAccountsByOwner").
+        params (list, optional): Method parameters.
+
+    Returns:
+        dict: RPC response JSON.
+
+    Raises:
+        requests.exceptions.RequestException: For HTTP or network errors.
+        ValueError: For invalid JSON or response format.
+    """
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params or []
+    }
+
+    try:
+        response = requests.post(SOLANA_URL, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()  # Raise for 4xx/5xx errors
+
+        try:
+            result = response.json()
+            if "error" in result:
+                raise ValueError(f"RPC error: {result['error']}")
+            return result
+        except ValueError as e:
+            raise ValueError(f"Invalid JSON response: {e}")
+
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 429:
+            raise  # Trigger retry
+        raise requests.exceptions.RequestException(f"HTTP error: {e}")
+    except requests.exceptions.RequestException as e:
+        raise requests.exceptions.RequestException(f"Network error: {e}")
+
+
 @cached(token_cache)
 def get_token_balance():
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
@@ -509,17 +553,16 @@ def get_token_balance():
             client = Client(SOLANA_URL)
             
             # Get all SPL token accounts owned by this wallet address
-            response = client.get_token_accounts_by_owner(
-                Pubkey.from_string(CONFIG["ADDRESS"]),
-                TokenAccountOpts(program_id=Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")),
-            )
+            response = call_solana_rpc("getTokenAccountsByOwner",[CONFIG["ADDRESS"],
+                                                                  {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                                                                  {"encoding": "jsonParsed"}])
             
-            if response.value is not None:
+            if response['result'] is not None:
                 token_balances = {}
                 
-                for account in response.value:
+                for account in response['result']['value']:
                     # Parse token data from the response
-                    account_data = account.account.data.parsed["info"]
+                    account_data = account["account"]["data"]["parsed"]["info"]
                     mint = account_data["mint"]  # Token mint address (equivalent to asset_id)
                     amount = int(account_data["tokenAmount"]["amount"])
                     
