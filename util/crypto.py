@@ -362,7 +362,7 @@ def check_pending_positions(traders, logger):
                 if tx["sent"] == 0:
                     try:
                         # Check if the order is cancelled
-                        logger.info(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
+                        logger.debug(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                             if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
                                     trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
