@@ -222,7 +222,7 @@ def get_spl_token_txs(logger):
         token_txs = {}
         # For each token in the balance, get its transactions
         for stock in CONFIG["TRADING_SYMBOLS"]:
-            token_mint = STOCKS[stock["TICKER"]]["asset_id"].lower()
+            token_mint = STOCKS[stock["TICKER"]]["asset_id"]
             token_txs[token_mint] = []
             account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']), Pubkey.from_string(token_mint))
             last_tx = None if token_mint not in last_checked_tx else last_checked_tx[token_mint]
@@ -255,7 +255,7 @@ def get_spl_token_txs(logger):
 
                 if tx_data:
                     tx = {
-                        "signature": sig_info.signature,
+                        "signature": str(sig_info.signature),
                         "sent": 0,  # Assuming it's received
                         "asset_id": token_mint,
                         "amount": 0,
@@ -312,13 +312,13 @@ def check_pending_positions(traders, logger):
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
         crypto_txs = get_sol_txs(logger)
         all_token_txs = get_spl_token_txs(logger)
-        logger.info(f"Fetched {len(crypto_txs)} SOL txs.")
+        logger.info(f"Fetched {len(crypto_txs)} SOL txs,  {len(all_token_txs)} SPL tokens")
         SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
         token_divisor = 1_000_000_000
     else:
         crypto_txs = get_xch_txs()
         all_token_txs = get_cat_txs()
-        logger.info(f"Fetched {len(crypto_txs)} XCH txs.")
+        logger.info(f"Fetched {len(crypto_txs)} XCH txs, {len(all_token_txs)} CAT tokens")
         token_divisor = CAT_MOJO
     
     for trader in traders:
@@ -567,7 +567,7 @@ def get_token_balance():
                     # Format in same structure as Chia tokens for compatibility
                     token_balances[mint] = {
                         "asset_id": mint,
-                        "balance": amount // 1_000_000_000,
+                        "balance": amount / 1_000_000_000,
                     }
                 
                 return token_balances
