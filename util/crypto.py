@@ -336,7 +336,7 @@ def check_pending_positions(traders, logger):
                     logger.info(f"Buy {trader.stock} confirmed")
                     confirmed = True
             if trader.type == StrategyType.GRID:
-                asset_id = STOCKS[trader.ticker]["asset_id"].lower()
+                asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
                 if asset_id not in all_token_txs:
                     all_token_txs[asset_id] = []
                 token_txs = all_token_txs[asset_id]
@@ -396,7 +396,7 @@ def check_pending_positions(traders, logger):
                         continue
         if trader.position_status == PositionStatus.PENDING_SELL.name or trader.position_status == PositionStatus.PENDING_LIQUIDATION.name:
             # Check if the order is cancelled
-            asset_id = STOCKS[trader.ticker]["asset_id"].lower()
+            asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
             if asset_id not in all_token_txs:
                 all_token_txs[asset_id] = []
             token_txs = all_token_txs[asset_id]
