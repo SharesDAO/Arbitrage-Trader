@@ -292,7 +292,7 @@ def get_spl_token_txs(logger):
                                 # Check if it's a transfer instruction (type 2)
                                 if instruction_type == 3 or instruction_type == 12:
                                     tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
-                    if tx["memo"] and "customer_id" in tx["memo"] > 0:
+                    if tx["memo"] and "customer_id" in tx["memo"]:
                         if "did_id" in tx["memo"]:
                             tx["sent"] = 1
                         else:
