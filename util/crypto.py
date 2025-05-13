@@ -21,10 +21,8 @@ from chia.types.signing_mode import CHIP_0002_SIGN_MESSAGE_PREFIX
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_secret_key, \
     DEFAULT_HIDDEN_PUZZLE_HASH
 from chia_rs import PrivateKey, AugSchemeMPL
-from solders.solders import Signature
 from spl.token.instructions import get_associated_token_address
 
-from main import logger
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
 from util.db import update_position, get_last_trade, delete_trade
