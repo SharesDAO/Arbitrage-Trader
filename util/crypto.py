@@ -270,10 +270,8 @@ def get_spl_token_txs(logger):
                             if str(message.account_keys[instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
                                 # First 4 bytes are instruction type
                                 parsed_data = base58.b58decode(instruction.data)
-                                instruction_type = parsed_data[0]
                                 # Check if it's a transfer instruction (type 2)
-                                if instruction_type == 3 or instruction_type == 12:
-                                    tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
+                                tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
                     if tx["memo"] and "customer_id" in tx["memo"]:
                         if "did_id" in tx["memo"]:
                             tx["sent"] = 1
