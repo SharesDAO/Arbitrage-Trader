@@ -314,7 +314,7 @@ def check_pending_positions(traders, logger):
         all_token_txs = get_spl_token_txs(logger)
         logger.info(f"Fetched {len(crypto_txs)} SOL txs,  {len(all_token_txs)} SPL tokens")
         SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
-        token_divisor = 1_000_000_000
+        token_divisor = 1
     else:
         crypto_txs = get_xch_txs()
         all_token_txs = get_cat_txs()
