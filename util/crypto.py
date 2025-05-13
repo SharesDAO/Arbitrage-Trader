@@ -260,7 +260,7 @@ def get_spl_token_txs(logger):
         token_txs = {}
         # For each token in the balance, get its transactions
         for stock in CONFIG["SYMBOLS"]:
-            token_mint = STOCKS[stock]["asset_id"].lower()
+            token_mint = STOCKS[stock]["asset_id"]
             token_txs[token_mint] = []
             account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']), Pubkey.from_string(token_mint))
             last_tx = None if token_mint not in last_checked_tx else last_checked_tx[token_mint]
@@ -293,7 +293,7 @@ def get_spl_token_txs(logger):
 
                 if tx_data:
                     tx = {
-                        "signature": sig_info.signature,
+                        "signature": str(sig_info.signature),
                         "sent": 0,  # Assuming it's received
                         "asset_id": token_mint,
                         "amount": 0,
@@ -416,7 +416,7 @@ def check_pending_positions(traders, logger):
                     logger.info(f"Buy {trader.stock} confirmed")
                     confirmed = True
             if trader.type == StrategyType.GRID:
-                asset_id = STOCKS[trader.ticker]["asset_id"].lower()
+                asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
                 if asset_id not in all_token_txs:
                     all_token_txs[asset_id] = []
                 token_txs = all_token_txs[asset_id]
@@ -476,7 +476,7 @@ def check_pending_positions(traders, logger):
                         continue
         if trader.position_status == PositionStatus.PENDING_SELL.name or trader.position_status == PositionStatus.PENDING_LIQUIDATION.name:
             # Check if the order is cancelled
-            asset_id = STOCKS[trader.ticker]["asset_id"].lower()
+            asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
             if asset_id not in all_token_txs:
                 all_token_txs[asset_id] = []
             token_txs = all_token_txs[asset_id]
