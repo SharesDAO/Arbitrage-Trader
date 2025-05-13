@@ -163,15 +163,6 @@ def get_sol_txs(logger):
                             if instruction_type == 2:
                                 # Extract lamports from bytes 4-12
                                 tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
-                        # Get token amount from token program
-                        if str(message.account_keys[
-                                   instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
-                            # First 4 bytes are instruction type
-                            parsed_data = base58.b58decode(instruction.data)
-                            instruction_type = parsed_data[0]
-                            # Check if it's a transfer instruction (type 2)
-                            if instruction_type == 3 or instruction_type == 12:
-                                tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
                 if tx["memo"] and "customer_id" in tx["memo"]:
                     if "did_id" in tx["memo"]:
                         tx["sent"] = 1
@@ -275,15 +266,6 @@ def get_spl_token_txs(logger):
                                     tx["memo"] = json.loads(memo_data.decode('utf-8'))
                                 except Exception as e:
                                     continue
-                            if str(message.account_keys[instruction.program_id_index]) == "11111111111111111111111111111111" and len(instruction.data) >= 12:  # System Program ID
-                                # First 4 bytes are instruction type
-                                parsed_data = base58.b58decode(instruction.data)
-                                instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
-
-                                # Check if it's a transfer instruction (type 2)
-                                if instruction_type == 2:
-                                    # Extract lamports from bytes 4-12
-                                    tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
                             # Get token amount from token program
                             if str(message.account_keys[instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
                                 # First 4 bytes are instruction type
@@ -314,7 +296,7 @@ def check_pending_positions(traders, logger):
         all_token_txs = get_spl_token_txs(logger)
         logger.info(f"Fetched {len(crypto_txs)} SOL txs,  {len(all_token_txs)} SPL tokens")
         SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
-        token_divisor = 1
+        token_divisor = 1_000_000_000
     else:
         crypto_txs = get_xch_txs()
         all_token_txs = get_cat_txs()
