@@ -586,7 +586,7 @@ def get_token_balance():
                     # Format in same structure as Chia tokens for compatibility
                     token_balances[mint] = {
                         "asset_id": mint,
-                        "balance": amount // 1_000_000_000,
+                        "balance": amount / 1_000_000_000,
                     }
 
                 return token_balances
