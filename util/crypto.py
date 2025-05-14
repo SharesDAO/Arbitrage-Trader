@@ -139,6 +139,7 @@ def get_xch_txs():
             tx["memo"] = {"customer_id": "", "symbol": ""}
     return data["received_transactions"]["transactions"]
 
+
 def get_sol_txs(logger):
     try:
         client = Client(SOLANA_URL)
@@ -150,12 +151,12 @@ def get_sol_txs(logger):
             until=last_tx,
             commitment=Commitment("confirmed")
         )
-        
+
         if not response.value:
             return []
         last_checked_tx["SOL"] = response.value[0].signature
         transactions = []
-        
+
         # For each signature, get the full transaction details
         for sig_info in response.value:
             tx_response = client.get_transaction(
@@ -163,10 +164,10 @@ def get_sol_txs(logger):
                 commitment=Commitment("confirmed"),
                 max_supported_transaction_version=0
             )
-            
+
             if not tx_response.value:
                 continue
-                
+
             tx_data = tx_response.value
 
             if tx_data:
@@ -193,7 +194,7 @@ def get_sol_txs(logger):
                                 continue
                         if str(message.account_keys[
                                    instruction.program_id_index]) == "11111111111111111111111111111111" and len(
-                                instruction.data) >= 12:  # System Program ID
+                            instruction.data) >= 12:  # System Program ID
                             # First 4 bytes are instruction type
                             parsed_data = base58.b58decode(instruction.data)
                             instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
@@ -202,16 +203,7 @@ def get_sol_txs(logger):
                             if instruction_type == 2:
                                 # Extract lamports from bytes 4-12
                                 tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
-                        # Get token amount from token program
-                        if str(message.account_keys[
-                                   instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
-                            # First 4 bytes are instruction type
-                            parsed_data = base58.b58decode(instruction.data)
-                            instruction_type = parsed_data[0]
-                            # Check if it's a transfer instruction (type 2)
-                            if instruction_type == 3 or instruction_type == 12:
-                                tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
-                if tx["memo"] and "customer_id" in tx["memo"]:
+                if tx["memo"] and "customer_id" in tx["memo"] and tx["amount"] > 0:
                     if "did_id" in tx["memo"]:
                         tx["sent"] = 1
                     else:
@@ -259,10 +251,11 @@ def get_spl_token_txs(logger):
         client = Client(SOLANA_URL)
         token_txs = {}
         # For each token in the balance, get its transactions
-        for stock in CONFIG["SYMBOLS"]:
-            token_mint = STOCKS[stock]["asset_id"]
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            token_mint = STOCKS[stock["TICKER"]]["asset_id"]
             token_txs[token_mint] = []
-            account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']), Pubkey.from_string(token_mint))
+            account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']),
+                                                          Pubkey.from_string(token_mint))
             last_tx = None if token_mint not in last_checked_tx else last_checked_tx[token_mint]
             # Get transaction signatures for this token account
             sigs_response = client.get_signatures_for_address(
@@ -290,7 +283,6 @@ def get_spl_token_txs(logger):
 
                 # Create a transaction object similar to Chia's CAT transactions
 
-
                 if tx_data:
                     tx = {
                         "signature": str(sig_info.signature),
@@ -306,31 +298,22 @@ def get_spl_token_txs(logger):
                         message = tx_data.transaction.transaction.message
                         for instruction in message.instructions:
                             # The Memo Program ID
-                            if str(message.account_keys[instruction.program_id_index]) == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
+                            if str(message.account_keys[
+                                       instruction.program_id_index]) == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr":
                                 # Decode the memo data
                                 try:
                                     memo_data = base58.b58decode(instruction.data)
                                     tx["memo"] = json.loads(memo_data.decode('utf-8'))
                                 except Exception as e:
                                     continue
-                            if str(message.account_keys[instruction.program_id_index]) == "11111111111111111111111111111111" and len(instruction.data) >= 12:  # System Program ID
-                                # First 4 bytes are instruction type
-                                parsed_data = base58.b58decode(instruction.data)
-                                instruction_type = struct.unpack("<I", parsed_data[0:4])[0]
-
-                                # Check if it's a transfer instruction (type 2)
-                                if instruction_type == 2:
-                                    # Extract lamports from bytes 4-12
-                                    tx["amount"] = struct.unpack("<Q", parsed_data[4:12])[0]
                             # Get token amount from token program
-                            if str(message.account_keys[instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                            if str(message.account_keys[
+                                       instruction.program_id_index]) == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
                                 # First 4 bytes are instruction type
                                 parsed_data = base58.b58decode(instruction.data)
-                                instruction_type = parsed_data[0]
                                 # Check if it's a transfer instruction (type 2)
-                                if instruction_type == 3 or instruction_type == 12:
-                                    tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
-                    if tx["memo"] and "customer_id" in tx["memo"] > 0:
+                                tx["amount"] = struct.unpack("<Q", parsed_data[1:9])[0]
+                    if tx["memo"] and "customer_id" in tx["memo"] and tx["amount"] > 0:
                         if "did_id" in tx["memo"]:
                             tx["sent"] = 1
                         else:
