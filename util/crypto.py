@@ -255,7 +255,8 @@ def get_spl_token_txs(logger):
         token_txs = {}
         # For each token in the balance, get its transactions
         for stock in CONFIG["TRADING_SYMBOLS"]:
-            token_mint = STOCKS[stock["TICKER"]]["asset_id"]
+            ticker = stock if "TICKER" not in stock else stock["TICKER"]
+            token_mint = STOCKS[ticker]["asset_id"]
             token_txs[token_mint] = []
             account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']),
                                                           Pubkey.from_string(token_mint))
