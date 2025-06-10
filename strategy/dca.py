@@ -31,7 +31,7 @@ class DCAStockTrader(StockTrader):
             return
         volume = crypto_volume * crypto_price / stock_price
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.stock]["buy_addr"], 1, volume, crypto_volume, self.logger, self.stock + "-DCA"):
+        if not send_asset(STOCKS[self.stock]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock + "-DCA"):
             # Failed to send order
             return
         self.volume += volume
@@ -52,7 +52,7 @@ class DCAStockTrader(StockTrader):
         self.profit = request_crypto / self.total_cost - 1
         if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
             timestamp = datetime.now()
-            if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_crypto,
+            if not send_asset(STOCKS[self.stock]["sell_addr"], 0, self.ticker, request_crypto,
                               self.volume, self.logger, self.stock + "-DCA", "MARKET" if liquid else "LIMIT"):
                 # Failed to send order
                 return
@@ -73,7 +73,7 @@ class DCAStockTrader(StockTrader):
             self.current_price = stock_buy_price
             request_crypto = self.volume * self.current_price / crypto_price
             timestamp = datetime.now()
-            if not send_asset(STOCKS[self.stock]["sell_addr"], self.wallet_id, request_crypto,
+            if not send_asset(STOCKS[self.stock]["sell_addr"], 0, self.ticker, request_crypto,
                               self.volume, self.logger, self.stock + "-DCA"):
                 # Failed to send order
                 return

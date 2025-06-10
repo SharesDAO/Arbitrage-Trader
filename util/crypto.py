@@ -38,10 +38,13 @@ SOLANA_DECIAML = 1000000000
 SOLANA_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 
 
-def send_asset(address: str, wallet_id: int, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
+def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
     try:
         if CONFIG["BLOCKCHAIN"] == "SOLANA":
-            return send_sol(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, logger)
+            if wallet_id == 1:
+                return send_sol(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, logger)
+            else:
+                return send_token(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, STOCKS[ticker]["asset_id"], logger)
         elif CONFIG["BLOCKCHAIN"] == "CHIA":
             if wallet_id == 1:
                 offer_amount = int(offer * XCH_MOJO)
@@ -586,7 +589,7 @@ def get_token_balance():
                     # Format in same structure as Chia tokens for compatibility
                     token_balances[mint] = {
                         "asset_id": mint,
-                        "balance": amount / 1_000_000_000,
+                        "balance": amount / SOLANA_DECIAML,
                     }
 
                 return token_balances
@@ -615,7 +618,12 @@ def send_sol(address: str, order, logger):
         offer = int(order["offer"] * SOLANA_DECIAML)
         request = int(order["request"] * SOLANA_DECIAML)
         memo = "{"+f'"did_id":"{CONFIG["DID_HEX"]}","customer_id":"{order["customer_id"]}","type":"{("LIMIT" if "type" not in order else order["type"])}","offer":{offer},"request":{request}'+"}"
-        # Get the recipient's public key
+        # If wallet does not have enough SOL, skip
+        balance = get_crypto_balance()
+        if balance - offer / SOLANA_DECIAML < 0.008:
+            logger.error(f"Insufficient balance {balance}, skipping...")
+            return False
+        # 获取接收者的公钥
         recipient_pubkey = Pubkey.from_string(address)
 
         # Add transfer instruction
@@ -654,7 +662,7 @@ def send_sol(address: str, order, logger):
             return False
     except Exception as e:
         logger.error(f"Error sending transaction: {e}")
-        raise
+        return False
 
 
 def create_transfer_token_instruction(
@@ -692,7 +700,10 @@ def send_token(address: str, order, token_mint: str, logger):
         memo = "{"+f'"did_id":"{CONFIG["DID_HEX"]}","customer_id":"{order["customer_id"]}","type":"{("LIMIT" if "type" not in order else order["type"])}","offer":{offer},"request":{request}'+"}"
         # Get the recipient's public key
         recipient_pubkey = Pubkey.from_string(address)
-
+        token_balance = get_token_balance()
+        if token_balance[token_mint]["balance"] - offer / SOLANA_DECIAML < 0.0000001:
+            logger.error(f"Insufficient balance {token_balance[token_mint]['balance']}, skipping...")
+            return False
         # Add transfer instruction
         tx_ix = create_transfer_token_instruction(
             source=get_associated_token_address(sender_pubkey, mint_pubkey),
@@ -728,7 +739,7 @@ def send_token(address: str, order, token_mint: str, logger):
             return False
     except Exception as e:
         logger.error(f"Error sending transaction: {e}")
-        raise
+        return False
 
 MAX_RETRIES = 2
 
