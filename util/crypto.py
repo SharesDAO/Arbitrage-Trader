@@ -18,7 +18,7 @@ from solana.rpc.api import Client
 from solana.rpc.commitment import Commitment
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
-from solana.rpc.types import TokenAccountOpts
+from solana.rpc.types import TokenAccountOpts, TxOpts
 from spl.token.instructions import get_associated_token_address
 from solders.solders import Pubkey, transfer, Instruction, Message, Transaction, AccountMeta, Signature
 from solders.system_program import TransferParams
@@ -654,13 +654,9 @@ def send_sol(address: str, order, logger):
             [private_key],
             recent_blockhash
         )
-        result = client.send_transaction(transaction).value
+        result = client.send_transaction(transaction, opts=TxOpts(skip_confirmation=False, preflight_commitment=Commitment("confirmed"), max_retries=5)).value
         logger.info(f"Sent {offer} SOL to {address} with memo: '{memo}', signature: {result}")
-        if is_transaction_finalized(str(result), logger):
-            return True
-        else:
-            logger.error(f"Transaction {result} is not finalized")
-            return False
+        return True
     except Exception as e:
         logger.error(f"Error sending transaction: {e}")
         return False
@@ -731,41 +727,12 @@ def send_token(address: str, order, token_mint: str, logger):
             [private_key],
             recent_blockhash
         )
-        result = client.send_transaction(transaction).value
+        result = client.send_transaction(transaction, opts=TxOpts(skip_confirmation=False, preflight_commitment=Commitment("confirmed"), max_retries=5)).value
         logger.info(f"Sent {offer} SOL to {address} with memo: '{memo}', signature: {result}")
-        if is_transaction_finalized(str(result), logger):
-            return True
-        else:
-            logger.error(f"Transaction {result} is not finalized")
-            return False
+        return True
     except Exception as e:
         logger.error(f"Error sending transaction: {e}")
         return False
-
-MAX_RETRIES = 2
-
-def is_transaction_finalized(signature: str, logger) -> bool:
-    tx_sig = Signature.from_string(signature)
-
-    # Method 1: Get signature status (faster, less detail)
-    # Add retry for rpc call
-    client = Client(SOLANA_URL)
-    for attempt in range(MAX_RETRIES):
-        try:
-            status_response = client.get_signature_statuses([tx_sig], search_transaction_history=True)
-            if status_response.value:
-                status = status_response.value[0]
-                if status is None or status.confirmation_status is None:
-                    raise
-                return True
-            raise
-        except Exception as e:
-            if attempt < MAX_RETRIES - 1:
-                logger.error(f"Request failed, retrying in 10s: {e}")
-                time.sleep(10)
-            else:
-                logger.error(f"Failed to fetch signatures after {MAX_RETRIES} attempts")
-                return False
 
 
 def add_token(symbol):
