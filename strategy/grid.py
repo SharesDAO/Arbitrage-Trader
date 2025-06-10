@@ -75,11 +75,11 @@ class GridStockTrader(StockTrader):
     def adjust_volume(self, total_volume):
         # Get current stock balance
         balance = get_token_balance()
-        if balance is None or self.ticker not in balance:
+        if balance is None or STOCKS[self.ticker]["asset_id"] not in balance:
             self.logger.error(f"Failed to get balance for {self.stock}, skipping...")
             return
         if self.position_status == PositionStatus.TRADABLE.name and total_volume > 0:
-            self.volume = math.floor(self.volume / total_volume * balance[self.ticker] * 1000) / 1000
+            self.volume = math.floor(self.volume / total_volume * balance[STOCKS[self.ticker]["asset_id"]]["balance"] * 1000) / 1000
             self.logger.info(f"Adjusting volume for {self.stock} to {self.volume}")
 
 
@@ -107,10 +107,10 @@ def execute_grid(logger):
             grid_traders.append(trader)
         traders.extend(grid_traders)
         balance = get_token_balance()
-        if balance is None or stock["TICKER"] not in balance:
+        if balance is None or STOCKS[stock["TICKER"]]["asset_id"] not in balance:
             logger.error(f"Failed to get balance for {stock['TICKER']}, skipping...")
             continue
-        if abs(total_volume - balance) > 0.001:
+        if abs(total_volume - balance[STOCKS[stock["TICKER"]]["asset_id"]]["balance"]) > 0.001:
             # Adjust volume for each grid trader
             for trader in grid_traders:
                 trader.adjust_volume(total_volume)

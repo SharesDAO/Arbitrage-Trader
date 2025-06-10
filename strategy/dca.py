@@ -91,11 +91,11 @@ class DCAStockTrader(StockTrader):
     def adjust_volume(self, total_volume):
         # Get current stock balance
         balance = get_token_balance()
-        if balance is None or self.ticker not in balance:
+        if balance is None or STOCKS[self.ticker]["asset_id"] not in balance:
             self.logger.error(f"Failed to get balance for {self.stock}, skipping...")
             return
         if self.position_status == PositionStatus.TRADABLE.name:
-            self.volume = balance[self.ticker]
+            self.volume = balance[STOCKS[self.ticker]["asset_id"]]["balance"]
             self.logger.info(f"Adjusting volume for {self.stock} to {self.volume}")
 
 
