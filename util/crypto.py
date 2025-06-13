@@ -622,7 +622,7 @@ def send_sol(address: str, order, logger):
         # If wallet does not have enough SOL, skip
         balance = get_crypto_balance()
         if balance - offer / SOLANA_DECIAML < 0.008:
-            logger.error(f"Insufficient balance {balance}, skipping...")
+            logger.error(f"Insufficient balance {balance}/{offer / SOLANA_DECIAML}, skipping...")
             return False
         # 获取接收者的公钥
         recipient_pubkey = Pubkey.from_string(address)
@@ -698,8 +698,8 @@ def send_token(address: str, order, token_mint: str, logger):
         # Get the recipient's public key
         recipient_pubkey = Pubkey.from_string(address)
         token_balance = get_token_balance()
-        if token_balance[token_mint]["balance"] - offer / SOLANA_DECIAML < 0.0000001:
-            logger.error(f"Insufficient balance {token_balance[token_mint]['balance']}, skipping...")
+        if token_balance[token_mint]["balance"] - offer / SOLANA_DECIAML < -0.0001:
+            logger.error(f"Insufficient balance {token_balance[token_mint]['balance']}/{offer / SOLANA_DECIAML}, skipping...")
             return False
         # Add transfer instruction
         tx_ix = create_transfer_token_instruction(
