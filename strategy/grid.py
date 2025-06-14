@@ -39,8 +39,8 @@ class GridStockTrader(StockTrader):
 
     def buy_stock(self, crypto_volume, crypto_price, stock_price):
         buy_price = self.max_price / CONFIG["CRYPTO_MIN"] - (self.index+1) * self.grid_width
-        while buy_price - self.grid_width > stock_price / crypto_price:
-            buy_price -= self.grid_width
+        #while buy_price - self.grid_width > stock_price / crypto_price:
+        #    buy_price -= self.grid_width
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
         if not trade(self.ticker, "BUY", volume, crypto_volume, self.logger, self.stock):
@@ -59,8 +59,8 @@ class GridStockTrader(StockTrader):
     def sell_stock(self, crypto_price, stock_price, liquid=False):
         self.current_price = stock_price
         sell_price = self.max_price / CONFIG["CRYPTO_MIN"] - self.index * self.grid_width
-        while sell_price + self.grid_width < stock_price / crypto_price:
-            sell_price += self.grid_width
+        #while sell_price + self.grid_width < stock_price / crypto_price:
+        #    sell_price += self.grid_width
         if liquid:
             sell_price = stock_price / crypto_price
         request_crypto = self.volume * sell_price
