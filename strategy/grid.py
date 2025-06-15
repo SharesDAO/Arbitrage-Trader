@@ -117,7 +117,8 @@ def execute_grid(logger):
                 stocks_stats[trader.ticker]["position"] += 1
             stocks_stats[trader.ticker]["arbitrage"] += trader.buy_count
             stocks_stats[trader.ticker]["profit"] += trader.profit
-            stocks_stats[trader.ticker]["volume"] += trader.volume
+            if trader.position_status == PositionStatus.TRADABLE.name:
+                stocks_stats[trader.ticker]["volume"] += trader.volume
             stocks_stats[trader.ticker]["value"] += trader.volume * (current_sell_price+current_buy_price) /2
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
             if trader.position_status == PositionStatus.TRADABLE.name:
