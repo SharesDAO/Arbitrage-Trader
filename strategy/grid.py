@@ -92,7 +92,7 @@ def execute_grid(logger):
         try:
             check_pending_positions(traders, logger)
         except Exception as e:
-            logger.error(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
+            logger.exception(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
             time.sleep(60)
             continue
         if fund_crypto == 0:

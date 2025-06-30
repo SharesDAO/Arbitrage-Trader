@@ -38,6 +38,10 @@ CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
 SOLANA_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+API_KEY = os.getenv("SPACESCAN_API_KEY", "tkn1qqqh2y5ew7qhwd3c3ehcg86d7wlnlamrxxvhddsh2y5ew7qhwqqqjgu2p8")
+HEADERS = {
+    "x-api-key": API_KEY
+}
 MAX_RETRIES = 3
 def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
     now = calendar.timegm(time.gmtime())
@@ -70,7 +74,7 @@ def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
 
 
 def get_xch_txs():
-    url = f"https://api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
+    url = f"https://pro-api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
 
     # Request with parameters
     params = {
@@ -81,7 +85,7 @@ def get_xch_txs():
         "count": 100
     }
 
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, headers=HEADERS)
     data = response.json()
     if data["status"] != "success":
         raise Exception("Failed to get XCH transactions")
@@ -177,7 +181,7 @@ def get_sol_txs(logger):
 
 
 def get_cat_txs():
-    url = f"https://api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}"
+    url = f"https://pro-api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}"
 
     # Request with parameters
     params = {
@@ -185,7 +189,7 @@ def get_cat_txs():
         "count": 200
     }
     cat_txs = {}
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, headers=HEADERS)
     data = response.json()
     if data["status"] != "success":
         raise Exception("Failed to get XCH transactions")
@@ -466,9 +470,9 @@ def get_crypto_balance():
             print(f"Cannot get SOL balance: {str(e)}")
             return None
     else:
-        url = f"https://api.spacescan.io/address/xch-balance/{CONFIG['ADDRESS']}"
+        url = f"https://pro-api.spacescan.io/address/xch-balance/{CONFIG['ADDRESS']}"
         try:
-            response = requests.get(url)
+            response = requests.get(url, headers=HEADERS)
             data = response.json()
             if data["status"] == "success":
                 return data["xch"]
@@ -556,9 +560,9 @@ def get_token_balance():
             print(f"Cannot get Solana token balance: {str(e)}")
             return {}
     else:
-        url = f"https://api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
+        url = f"https://pro-api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
         try:
-            response = requests.get(url)
+            response = requests.get(url, headers=HEADERS)
             data = response.json()
             if data["status"] == "success":
                 return {t["asset_id"]: t for t in data["data"]}
