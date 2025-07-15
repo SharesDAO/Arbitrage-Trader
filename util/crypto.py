@@ -79,7 +79,7 @@ def get_xch_txs():
     # Request with parameters
     params = {
         "wallet_id": "XCH",
-        "end": "10"
+        "end": "30"
     }
 
     response = requests.post(url, data=json.dumps(params))
@@ -183,7 +183,7 @@ def get_cat_txs():
     # Request with parameters
     params = {
         "wallet_id": "CAT",
-        "end": "10"
+        "end": "30"
     }
     cat_txs = {}
     response = requests.post(url, data=json.dumps(params))
