@@ -74,24 +74,20 @@ def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
 
 
 def get_xch_txs():
-    url = f"https://pro-api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
-
+    url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
     # Request with parameters
     params = {
-        "include_send_dust": "false",
-        "include_received_dust": "false",
-        "include_send": "false",
-        "include_received": "true",
-        "count": 100
+        "wallet_id": "XCH",
+        "end": "10"
     }
 
-    response = requests.get(url, params=params, headers=HEADERS)
+    response = requests.post(url, data=json.dumps(params))
     data = response.json()
-    if data["status"] != "success":
+    if "success" not in data or data["success"] != True:
         raise Exception("Failed to get XCH transactions")
-    for tx in data["received_transactions"]["transactions"]:
+    for tx in data["transactions"]:
         tx["sent"] = 0
-        tx["amount"] = tx["amount_mojo"]
+        tx["amount"] = int(tx["amount"] * XCH_MOJO)
         try:
             if len(tx["memo"][0]) > 81:
                 decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
@@ -181,21 +177,21 @@ def get_sol_txs(logger):
 
 
 def get_cat_txs():
-    url = f"https://pro-api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}"
+    url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
 
     # Request with parameters
     params = {
-        "send_cursor": "100",
-        "count": 200
+        "wallet_id": "CAT",
+        "end": "10"
     }
     cat_txs = {}
-    response = requests.get(url, params=params, headers=HEADERS)
+    response = requests.post(url, data=json.dumps(params))
     data = response.json()
-    if data["status"] != "success":
-        raise Exception("Failed to get XCH transactions")
-    for tx in data["received_transactions"]["transactions"]:
+    if "success" not in data or data["success"] != True:
+        raise Exception("Failed to get CAT transactions")
+    for tx in data["transactions"]:
         tx["sent"] = 0
-        tx["amount"] = tx["token_amount"] * CAT_MOJO
+        tx["amount"] = tx["amount"] * CAT_MOJO
         try:
             if len(tx["memo"][0]) > 81:
                 decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
@@ -470,12 +466,12 @@ def get_crypto_balance():
             print(f"Cannot get SOL balance: {str(e)}")
             return None
     else:
-        url = f"https://pro-api.spacescan.io/address/xch-balance/{CONFIG['ADDRESS']}"
+        url = f"{CONFIG['VAULT_HOST']}:8888/balance"
         try:
-            response = requests.get(url, headers=HEADERS)
+            response = requests.get(url)
             data = response.json()
-            if data["status"] == "success":
-                return data["xch"]
+            if len(data) > 0:
+                return data["XCH"]["balance"]
             else:
                 return 0
         except Exception as e:
@@ -560,12 +556,19 @@ def get_token_balance():
             print(f"Cannot get Solana token balance: {str(e)}")
             return {}
     else:
-        url = f"https://pro-api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
+        url = f"{CONFIG['VAULT_HOST']}:8888/balance"
         try:
-            response = requests.get(url, headers=HEADERS)
+            response = requests.get(url)
             data = response.json()
-            if data["status"] == "success":
-                return {t["asset_id"]: t for t in data["data"]}
+            if len(data) > 0:
+                result = {}
+                for t in data:
+                    if t["asset_id"] != "XCH":
+                        result[t["asset_id"]] = {
+                            "asset_id": t["asset_id"],
+                            "balance": t["balance"] / CAT_MOJO,
+                        }
+                return result
             else:
                 return {}
         except Exception as e:
