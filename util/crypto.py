@@ -563,8 +563,8 @@ def get_token_balance():
             data = response.json()
             if len(data) > 0:
                 result = {}
-                for t in data:
-                    if t["asset_id"] != 0:
+                for t in data.values():
+                    if str(t["asset_id"]) != "0":
                         result[t["asset_id"]] = t
                 return result
             else:
