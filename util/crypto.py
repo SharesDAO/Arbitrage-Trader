@@ -6,6 +6,7 @@ import re
 import struct
 import subprocess
 import time
+import traceback
 from datetime import datetime
 
 import base58
@@ -563,16 +564,13 @@ def get_token_balance():
             if len(data) > 0:
                 result = {}
                 for t in data:
-                    if t["asset_id"] != "XCH":
-                        result[t["asset_id"]] = {
-                            "asset_id": t["asset_id"],
-                            "balance": t["balance"] / CAT_MOJO,
-                        }
+                    if t["asset_id"] != 0:
+                        result[t["asset_id"]] = t
                 return result
             else:
                 return {}
         except Exception as e:
-            print(f"Cannot get token balance")
+            print(f"Cannot get token balance: {str(e)}")
             return None
 
 
