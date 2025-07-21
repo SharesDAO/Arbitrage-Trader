@@ -68,6 +68,7 @@ def load_xch_txs(xch_json_file):
 def load_cat_txs(cat_json_file):
     with open(cat_json_file, 'r') as f:
         data = json.load(f)
+        cat_txs = {}
         if data["status"] != "success":
             raise Exception("Failed to get XCH transactions")
         for tx in data["received_transactions"]["transactions"]:
@@ -117,19 +118,15 @@ def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
 
 
 def get_xch_txs():
-    # 如果有模拟数据，使用模拟数据
-    if mock_xch_txs is not None:
-        data = mock_xch_txs
-    else:
-        url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
-        # Request with parameters
-        params = {
-            "wallet_id": "XCH",
-            "end": "30"
-        }
+    url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
+    # Request with parameters
+    params = {
+        "wallet_id": "XCH",
+        "end": "30"
+    }
 
-        response = requests.post(url, data=json.dumps(params))
-        data = response.json()
+    response = requests.post(url, data=json.dumps(params))
+    data = response.json()
         
     if "success" not in data or data["success"] != True:
         raise Exception("Failed to get XCH transactions")
@@ -225,19 +222,16 @@ def get_sol_txs(logger):
 
 
 def get_cat_txs():
-    # 如果有模拟数据，使用模拟数据
-    if mock_cat_txs is not None:
-        data = mock_cat_txs
-    else:
-        url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
 
-        # Request with parameters
-        params = {
-            "wallet_id": "CAT",
-            "end": "30"
-        }
-        response = requests.post(url, data=json.dumps(params))
-        data = response.json()
+    url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
+
+    # Request with parameters
+    params = {
+        "wallet_id": "CAT",
+        "end": "30"
+    }
+    response = requests.post(url, data=json.dumps(params))
+    data = response.json()
         
     if "success" not in data or data["success"] != True:
         raise Exception("Failed to get CAT transactions")
