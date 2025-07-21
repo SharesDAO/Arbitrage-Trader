@@ -44,6 +44,48 @@ HEADERS = {
     "x-api-key": API_KEY
 }
 MAX_RETRIES = 3
+
+def load_xch_txs(xch_json_file):
+    # 读取XCH交易数据
+    with open(xch_json_file, 'r') as f:
+        data = json.load(f)
+        if data["status"] != "success":
+            raise Exception("Failed to get XCH transactions")
+        for tx in data["received_transactions"]["transactions"]:
+            tx["sent"] = 0
+            tx["amount"] = tx["amount_mojo"]
+            try:
+                if len(tx["memo"][0]) > 81:
+                    decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
+                else:
+                    decoded_string = bytes.fromhex(tx["memo"][1]).decode('utf-8')
+                response = json.loads(decoded_string)
+                tx["memo"] = response
+            except Exception as e:
+                tx["memo"] = {"customer_id": "", "symbol": ""}
+        return data["received_transactions"]["transactions"]
+
+def load_cat_txs(cat_json_file):
+    with open(cat_json_file, 'r') as f:
+        data = json.load(f)
+        if data["status"] != "success":
+            raise Exception("Failed to get XCH transactions")
+        for tx in data["received_transactions"]["transactions"]:
+            tx["sent"] = 0
+            tx["amount"] = tx["token_amount"] * CAT_MOJO
+            try:
+                if len(tx["memo"][0]) > 81:
+                    decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
+                else:
+                    decoded_string = bytes.fromhex(tx["memo"][1]).decode('utf-8')
+                response = json.loads(decoded_string)
+                tx["memo"] = response
+            except Exception as e:
+                tx["memo"] = {"customer_id": "", "symbol": ""}
+            if tx["asset_id"].lower() not in cat_txs:
+                cat_txs[tx["asset_id"].lower()] = []
+            cat_txs[tx["asset_id"].lower()].append(tx)
+        return cat_txs
 def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
     now = calendar.timegm(time.gmtime())
     inputs = {
@@ -75,15 +117,20 @@ def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
 
 
 def get_xch_txs():
-    url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
-    # Request with parameters
-    params = {
-        "wallet_id": "XCH",
-        "end": "30"
-    }
+    # 如果有模拟数据，使用模拟数据
+    if mock_xch_txs is not None:
+        data = mock_xch_txs
+    else:
+        url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
+        # Request with parameters
+        params = {
+            "wallet_id": "XCH",
+            "end": "30"
+        }
 
-    response = requests.post(url, data=json.dumps(params))
-    data = response.json()
+        response = requests.post(url, data=json.dumps(params))
+        data = response.json()
+        
     if "success" not in data or data["success"] != True:
         raise Exception("Failed to get XCH transactions")
     for tx in data["transactions"]:
@@ -178,18 +225,23 @@ def get_sol_txs(logger):
 
 
 def get_cat_txs():
-    url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
+    # 如果有模拟数据，使用模拟数据
+    if mock_cat_txs is not None:
+        data = mock_cat_txs
+    else:
+        url = f"{CONFIG['VAULT_HOST']}:8888/transactions"
 
-    # Request with parameters
-    params = {
-        "wallet_id": "CAT",
-        "end": "30"
-    }
-    cat_txs = {}
-    response = requests.post(url, data=json.dumps(params))
-    data = response.json()
+        # Request with parameters
+        params = {
+            "wallet_id": "CAT",
+            "end": "30"
+        }
+        response = requests.post(url, data=json.dumps(params))
+        data = response.json()
+        
     if "success" not in data or data["success"] != True:
         raise Exception("Failed to get CAT transactions")
+    cat_txs = {}
     for tx in data["transactions"]:
         tx["sent"] = 0
         tx["amount"] = tx["amount"] * CAT_MOJO
@@ -286,7 +338,7 @@ def get_spl_token_txs(logger):
         return {}
 
 
-def check_pending_positions(traders, logger):
+def check_pending_positions(traders, logger, update: bool = False):
     token_balance = get_token_balance()
     
     # Get transactions based on blockchain type
@@ -296,6 +348,11 @@ def check_pending_positions(traders, logger):
         logger.info(f"Fetched {len(crypto_txs)} SOL txs,  {len(all_token_txs)} SPL tokens")
         SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
         token_divisor = 1_000_000_000
+    elif update:
+        crypto_txs = load_xch_txs(CONFIG["XCH_TX_FILE"])
+        all_token_txs = load_cat_txs(CONFIG["CAT_TX_FILE"])
+        logger.info(f"Fetched {len(crypto_txs)} XCH txs, {len(all_token_txs)} CAT tokens")
+        token_divisor = CAT_MOJO
     else:
         crypto_txs = get_xch_txs()
         all_token_txs = get_cat_txs()

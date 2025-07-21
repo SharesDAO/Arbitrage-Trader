@@ -11,7 +11,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import get_crypto_price, sign_message_by_key
+from util.crypto import check_pending_positions, get_crypto_price, sign_message_by_key, update_mock_transactions
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
 from util.sharesdao import get_pool_by_id
@@ -163,8 +163,40 @@ def reset(volume: str, wallet: int, ticker: str, strategy: str):
         print(f"Grid position cannot be reset!")
 
 
+@click.command("update", help="Update the pending positions")
+@click.option(
+    "-x",
+    "--xch",
+    help="XCH TX JSON file",
+    type=str,
+    required=True
+)
+@click.option(
+    "-c",
+    "--cat",
+    help="CAT TX JSON file",
+    type=str,
+    required=True
+)
+@click.option(
+    "-s",
+    "--strategy",
+    help="Your trading strategy name, e.g DCA, Grid",
+    type=str,
+    required=True
+)
+def update(xch: str, cat: str, strategy: str):
+    if strategy.lower() == "dca":
+        load_config(StrategyType.DCA.value)
+    elif strategy.lower() == "grid":
+        load_config(StrategyType.GRID.value)
+    CONFIG["XCH_TX_FILE"] = xch
+    CONFIG["CAT_TX_FILE"] = cat
+    check_pending_positions(logger, update=True)
+
 cli.add_command(run)
 cli.add_command(liquidate)
 cli.add_command(reset)
+cli.add_command(update)
 if __name__ == "__main__":
     cli()
