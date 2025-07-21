@@ -11,7 +11,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import check_pending_positions, get_crypto_price, sign_message_by_key, update_mock_transactions
+from util.crypto import check_pending_positions, get_crypto_price, sign_message_by_key
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
 from util.sharesdao import get_pool_by_id
