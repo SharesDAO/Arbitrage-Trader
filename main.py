@@ -186,13 +186,23 @@ def reset(volume: str, wallet: int, ticker: str, strategy: str):
     required=True
 )
 def update(xch: str, cat: str, strategy: str):
+    traders = []
     if strategy.lower() == "dca":
         load_config(StrategyType.DCA.value)
+        traders = [DCAStockTrader(stock, logger) for stock in CONFIG["TRADING_SYMBOLS"]]
     elif strategy.lower() == "grid":
         load_config(StrategyType.GRID.value)
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            # Create grids for each stock
+            for i in range(stock["GRID_NUM"]):
+                trader = GridStockTrader(i, stock, logger)
+                traders.append(trader)
+    else:
+        logger.error(f"Invalid strategy: {strategy}")
+        return
     CONFIG["XCH_TX_FILE"] = xch
     CONFIG["CAT_TX_FILE"] = cat
-    check_pending_positions(logger, update=True)
+    check_pending_positions(traders, logger, update=True)
 
 cli.add_command(run)
 cli.add_command(liquidate)
