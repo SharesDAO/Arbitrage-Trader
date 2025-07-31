@@ -126,7 +126,7 @@ def execute_grid(logger):
                     if trader.max_price / CONFIG["CRYPTO_MIN"] - trader.index * trader.grid_width >= current_sell_price / crypto_price and trader.volume == 0 and check_cash_reserve(traders, fund_crypto, True, logger):
                         trader.buy_stock(fund_crypto * trader.invested_crypto * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, crypto_price, current_sell_price)
                         time.sleep(3)
-                    elif trader.max_price / CONFIG["CRYPTO_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / crypto_price and trader.volume > 0 and current_buy_price / crypto_price > trader.avg_price:
+                    elif trader.max_price / CONFIG["CRYPTO_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / crypto_price and trader.volume > 0:
                         trader.sell_stock(crypto_price, current_buy_price)
                         time.sleep(3)
                 except Exception as e:
