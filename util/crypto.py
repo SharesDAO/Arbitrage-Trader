@@ -138,8 +138,8 @@ def get_xch_txs():
                 decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
             else:
                 decoded_string = bytes.fromhex(tx["memo"][1]).decode('utf-8')
-            response = json.loads(decoded_string)
-            tx["memo"] = response
+            memo = json.loads(decoded_string)
+            tx["memo"] = memo
         except Exception as e:
             tx["memo"] = {"customer_id": "", "symbol": ""}
     return data["transactions"]
@@ -244,8 +244,8 @@ def get_cat_txs():
                 decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
             else:
                 decoded_string = bytes.fromhex(tx["memo"][1]).decode('utf-8')
-            response = json.loads(decoded_string)
-            tx["memo"] = response
+            memo = json.loads(decoded_string)
+            tx["memo"] = memo
         except Exception as e:
             tx["memo"] = {"customer_id": "", "symbol": ""}
         if tx["asset_id"].lower() not in cat_txs:
