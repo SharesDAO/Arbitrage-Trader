@@ -32,7 +32,6 @@ def cli():
 
 def load_config(strategy: str):
     CONFIG["POOL_ID"] = os.environ["SHARESDAO_FUND_POOL_ID"]
-    CONFIG["PROXY_URL"] = os.environ["PROXY_URL"]
     pool = get_pool_by_id(CONFIG["POOL_ID"])
     CONFIG["BLOCKCHAIN"] = "CHIA" if pool["blockchain"] == 1 else "SOLANA"
     STOCKS.update(get_pool_list(pool["blockchain"]))
