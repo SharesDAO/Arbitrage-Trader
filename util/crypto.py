@@ -87,6 +87,77 @@ def load_cat_txs(cat_json_file):
                 cat_txs[tx["asset_id"].lower()] = []
             cat_txs[tx["asset_id"].lower()].append(tx)
         return cat_txs
+
+def fetch_xch_txs():
+    """
+    通过GET API获取XCH交易数据
+    :param api_url: API接口URL
+    :return: 处理后的交易列表
+    """
+    try:
+        url = f"{CONFIG['PROXY_URL']}/https://api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data["status"] != "success":
+            raise Exception("Failed to get XCH transactions")
+        
+        for tx in data["received_transactions"]["transactions"]:
+            tx["sent"] = 0
+            tx["amount"] = tx["amount_mojo"]
+            try:
+                if len(tx["memo"][0]) > 81:
+                    decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
+                else:
+                    decoded_string = bytes.fromhex(tx["memo"][1]).decode('utf-8')
+                response_memo = json.loads(decoded_string)
+                tx["memo"] = response_memo
+            except Exception as e:
+                tx["memo"] = {"customer_id": "", "symbol": ""}
+        return data["received_transactions"]["transactions"]
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"API请求失败: {e}")
+    except json.JSONDecodeError as e:
+        raise Exception(f"JSON解析失败: {e}")
+
+def fetch_cat_txs():
+    """
+    通过GET API获取CAT交易数据
+    :param api_url: API接口URL
+    :return: 按asset_id分组的交易字典
+    """
+    try:
+        url = f"{CONFIG['PROXY_URL']}/https://api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}?count=100"
+        response = requests.get(url,  timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+        
+        cat_txs = {}
+        if data["status"] != "success":
+            raise Exception("Failed to get CAT transactions")
+        
+        for tx in data["received_transactions"]["transactions"]:
+            tx["sent"] = 0
+            tx["amount"] = tx["token_amount"] * CAT_MOJO
+            try:
+                if len(tx["memo"][0]) > 81:
+                    decoded_string = bytes.fromhex(tx["memo"][0]).decode('utf-8')
+                else:
+                    decoded_string = bytes.fromhex(tx["memo"][1]).decode('utf-8')
+                response_memo = json.loads(decoded_string)
+                tx["memo"] = response_memo
+            except Exception as e:
+                tx["memo"] = {"customer_id": "", "symbol": ""}
+            if tx["asset_id"].lower() not in cat_txs:
+                cat_txs[tx["asset_id"].lower()] = []
+            cat_txs[tx["asset_id"].lower()].append(tx)
+        return cat_txs
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"API请求失败: {e}")
+    except json.JSONDecodeError as e:
+        raise Exception(f"JSON解析失败: {e}")
+
 def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
     now = calendar.timegm(time.gmtime())
     inputs = {
@@ -348,8 +419,8 @@ def check_pending_positions(traders, logger, update: bool = False):
         logger.info(f"Fetched {len(crypto_txs)} XCH txs, {len(all_token_txs)} CAT tokens")
         token_divisor = CAT_MOJO
     else:
-        crypto_txs = get_xch_txs()
-        all_token_txs = get_cat_txs()
+        crypto_txs = fetch_xch_txs()
+        all_token_txs = fetch_cat_txs()
         logger.info(f"Fetched {len(crypto_txs)} XCH txs, {len(all_token_txs)} CAT tokens")
         token_divisor = CAT_MOJO
     
