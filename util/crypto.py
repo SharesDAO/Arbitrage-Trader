@@ -34,6 +34,8 @@ price_cache = TTLCache(maxsize=100, ttl=30)
 tx_cache = TTLCache(maxsize=100, ttl=30)
 balance_cache = TTLCache(maxsize=10, ttl=10)
 token_cache = TTLCache(maxsize=10, ttl=10)
+cat_cache = TTLCache(maxsize=10, ttl=300)
+xch_cache = TTLCache(maxsize=10, ttl=300)
 last_checked_tx = {}
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
@@ -88,6 +90,7 @@ def load_cat_txs(cat_json_file):
             cat_txs[tx["asset_id"].lower()].append(tx)
         return cat_txs
 
+@cached(xch_cache)
 def fetch_xch_txs():
     """
     通过GET API获取XCH交易数据
@@ -121,6 +124,7 @@ def fetch_xch_txs():
     except json.JSONDecodeError as e:
         raise Exception(f"JSON解析失败: {e}")
 
+@cached(cat_cache)
 def fetch_cat_txs():
     """
     通过GET API获取CAT交易数据
