@@ -92,13 +92,8 @@ def load_cat_txs(cat_json_file):
 
 @cached(xch_cache)
 def fetch_xch_txs():
-    """
-    通过GET API获取XCH交易数据
-    :param api_url: API接口URL
-    :return: 处理后的交易列表
-    """
     try:
-        url = f"https://api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
+        url = f"https://pro-api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
         response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
@@ -126,13 +121,8 @@ def fetch_xch_txs():
 
 @cached(cat_cache)
 def fetch_cat_txs():
-    """
-    通过GET API获取CAT交易数据
-    :param api_url: API接口URL
-    :return: 按asset_id分组的交易字典
-    """
     try:
-        url = f"https://api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}?count=100"
+        url = f"https://pro-api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}?count=100"
         response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
