@@ -6,3 +6,5 @@ click
 solana
 solders
 base58
+web3
+eth-account

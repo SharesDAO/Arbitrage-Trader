@@ -38,6 +38,11 @@ class GridStockTrader(StockTrader):
         buy_price = self.max_price / CONFIG["CRYPTO_MIN"] - (self.index+1) * self.grid_width
         while buy_price - self.grid_width > stock_price / crypto_price:
             buy_price -= self.grid_width
+        # Check if order value is at least $5
+        order_value_usd = crypto_volume * crypto_price
+        if order_value_usd < 5.0:
+            self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping buy order for {self.stock}")
+            return
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.ticker]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock):
@@ -61,6 +66,11 @@ class GridStockTrader(StockTrader):
         if liquid:
             sell_price = stock_price / crypto_price
         request_crypto = self.volume * sell_price
+        # Check if order value is at least $5
+        order_value_usd = self.volume * stock_price
+        if order_value_usd < 5.0:
+            self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping sell order for {self.stock}")
+            return
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.ticker]["sell_addr"], 0, self.ticker, request_crypto,
                           self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT"):
@@ -75,11 +85,14 @@ class GridStockTrader(StockTrader):
     def adjust_volume(self, total_volume):
         # Get current stock balance
         balance = get_token_balance()
-        if balance is None or STOCKS[self.ticker]["asset_id"] not in balance:
+        asset_id = STOCKS[self.ticker]["asset_id"]
+        if CONFIG["BLOCKCHAIN"] == "EVM":
+            asset_id = asset_id.lower()
+        if balance is None or asset_id not in balance:
             self.logger.error(f"Failed to get balance for {self.stock}, skipping...")
             return
         if self.position_status == PositionStatus.TRADABLE.name and total_volume > 0:
-            self.volume = math.floor(self.volume / total_volume * balance[STOCKS[self.ticker]["asset_id"]]["balance"] * 1000) / 1000
+            self.volume = math.floor(self.volume / total_volume * balance[asset_id]["balance"] * 1000) / 1000
             self.logger.info(f"Adjusting volume for {self.stock} to {self.volume}")
 
 
@@ -89,10 +102,14 @@ def execute_grid(logger):
         # Update invest key based on blockchain
         if CONFIG["BLOCKCHAIN"] == "CHIA":
             invest_key = "INVEST_XCH"
-        else:  # SOLANA
+        elif CONFIG["BLOCKCHAIN"] == "SOLANA":
             invest_key = "INVEST_SOL"
+        elif CONFIG["BLOCKCHAIN"] == "EVM":
+            invest_key = "INVEST_USDC"
+        else:
+            invest_key = None
             
-        if invest_key in stock:
+        if invest_key and invest_key in stock:
             stock["INVEST_CRYPTO"] = stock[invest_key]
         else:
             stock["INVEST_CRYPTO"] = 0
@@ -107,10 +124,13 @@ def execute_grid(logger):
             grid_traders.append(trader)
         traders.extend(grid_traders)
         balance = get_token_balance()
-        if balance is None or STOCKS[stock["TICKER"]]["asset_id"] not in balance:
+        asset_id = STOCKS[stock["TICKER"]]["asset_id"]
+        if CONFIG["BLOCKCHAIN"] == "EVM":
+            asset_id = asset_id.lower()
+        if balance is None or asset_id not in balance:
             logger.error(f"Failed to get balance for {stock['TICKER']}, skipping...")
             continue
-        if abs(total_volume - balance[STOCKS[stock["TICKER"]]["asset_id"]]["balance"]) > 0.001:
+        if abs(total_volume - balance[asset_id]["balance"]) > 0.001:
             # Adjust volume for each grid trader
             for trader in grid_traders:
                 trader.adjust_volume(total_volume)

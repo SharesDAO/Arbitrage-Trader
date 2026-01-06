@@ -29,6 +29,11 @@ class DCAStockTrader(StockTrader):
         if self.stock in set(CONFIG["SELL_ONLY_SYMBOLS"]):
             self.logger.info(f"{self.stock} is in SELL_ONLY_SYMBOLS, skipping...")
             return
+        # Check if order value is at least $5
+        order_value_usd = crypto_volume * crypto_price
+        if order_value_usd < 5.0:
+            self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping buy order for {self.stock}")
+            return
         volume = crypto_volume * crypto_price / stock_price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.stock]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock + "-DCA"):
@@ -51,6 +56,11 @@ class DCAStockTrader(StockTrader):
         request_crypto = self.volume * self.current_price / crypto_price
         self.profit = request_crypto / self.total_cost - 1
         if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
+            # Check if order value is at least $5
+            order_value_usd = self.volume * self.current_price
+            if order_value_usd < 5.0:
+                self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping sell order for {self.stock}")
+                return
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], 0, self.ticker, request_crypto,
                               self.volume, self.logger, self.stock + "-DCA", "MARKET" if liquid else "LIMIT"):
@@ -72,6 +82,11 @@ class DCAStockTrader(StockTrader):
         if self.buy_count == CONFIG["MAX_BUY_TIMES"] and self.profit < -CONFIG["MAX_LOSS_PERCENTAGE"]:
             self.current_price = stock_buy_price
             request_crypto = self.volume * self.current_price / crypto_price
+            # Check if order value is at least $5
+            order_value_usd = self.volume * self.current_price
+            if order_value_usd < 5.0:
+                self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping liquidation sell for {self.stock}")
+                return
             timestamp = datetime.now()
             if not send_asset(STOCKS[self.stock]["sell_addr"], 0, self.ticker, request_crypto,
                               self.volume, self.logger, self.stock + "-DCA"):
@@ -91,11 +106,14 @@ class DCAStockTrader(StockTrader):
     def adjust_volume(self, total_volume):
         # Get current stock balance
         balance = get_token_balance()
-        if balance is None or STOCKS[self.ticker]["asset_id"] not in balance:
+        asset_id = STOCKS[self.ticker]["asset_id"]
+        if CONFIG["BLOCKCHAIN"] == "EVM":
+            asset_id = asset_id.lower()
+        if balance is None or asset_id not in balance:
             self.logger.error(f"Failed to get balance for {self.stock}, skipping...")
             return
         if self.position_status == PositionStatus.TRADABLE.name:
-            self.volume = balance[STOCKS[self.ticker]["asset_id"]]["balance"]
+            self.volume = balance[asset_id]["balance"]
             self.logger.info(f"Adjusting volume for {self.stock} to {self.volume}")
 
 

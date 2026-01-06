@@ -9,6 +9,9 @@ import time
 import base58
 import requests
 from cachetools import TTLCache, cached
+from web3 import Web3
+from eth_account import Account
+from eth_account.messages import encode_defunct
 
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
@@ -37,6 +40,11 @@ CAT_MOJO = 1000
 SOLANA_DECIAML = 1000000000
 SOLANA_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 
+# ERC20 Transfer function signature: transfer(address,uint256)
+ERC20_TRANSFER_SIGNATURE = "0xa9059cbb"
+# ERC20 Transfer event signature: Transfer(address,address,uint256)
+ERC20_TRANSFER_EVENT_SIGNATURE = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
 
 def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
     try:
@@ -45,6 +53,15 @@ def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer:
                 return send_sol(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, logger)
             else:
                 return send_token(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, STOCKS[ticker]["asset_id"], logger)
+        elif CONFIG["BLOCKCHAIN"] == "EVM":
+            # For EVM, wallet_id 1 = USDC (ERC20 for buy orders), wallet_id 0 = stock ERC20 token (for sell orders)
+            if wallet_id == 1:
+                # For buy orders, pass stock token address so it can be included in memo
+                stock_token_address = STOCKS[ticker]["asset_id"]
+                return send_usdc(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, stock_token_address, logger)
+            else:
+                # wallet_id 0 means sending stock ERC20 token
+                return send_stock_token(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, STOCKS[ticker]["asset_id"], logger)
         elif CONFIG["BLOCKCHAIN"] == "CHIA":
             if wallet_id == 1:
                 offer_amount = int(offer * XCH_MOJO)
@@ -382,6 +399,12 @@ def check_pending_positions(traders, logger):
         logger.info(f"Fetched {len(crypto_txs)} SOL txs.")
         SOL_LAMPORTS = SOLANA_DECIAML  # 10^9 lamports in 1 SOL
         token_divisor = SOLANA_DECIAML
+    elif CONFIG["BLOCKCHAIN"] == "EVM":
+        crypto_txs = get_evm_txs(logger)
+        all_token_txs = get_erc20_token_txs(logger)
+        logger.info(f"Fetched {len(crypto_txs)} EVM native token txs.")
+        # Token divisor will be determined per token (USDC uses CONFIG["USDC_DECIMALS"], stock tokens typically use 18)
+        token_divisor = 10**CONFIG.get("USDC_DECIMALS", 18)  # Default to USDC decimals
     else:
         crypto_txs = get_xch_txs()
         all_token_txs = get_cat_txs()
@@ -395,7 +418,10 @@ def check_pending_positions(traders, logger):
             if trader.type == StrategyType.DCA:
                 # Check if the pending buy is confirmed
                 expect_amount = trader.volume
-                amount = token_balance[STOCKS[trader.ticker]["asset_id"]]["balance"]
+                asset_id = STOCKS[trader.ticker]["asset_id"]
+                if CONFIG["BLOCKCHAIN"] == "EVM":
+                    asset_id = asset_id.lower()
+                amount = token_balance[asset_id]["balance"]
                 if amount - expect_amount >= -0.003:
                     trader.position_status = PositionStatus.TRADABLE.name
                     trader.volume = amount
@@ -404,6 +430,8 @@ def check_pending_positions(traders, logger):
                     confirmed = True
             if trader.type == StrategyType.GRID:
                 asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
+                if CONFIG["BLOCKCHAIN"] == "EVM":
+                    asset_id = asset_id.lower()
                 if asset_id not in all_token_txs:
                     all_token_txs[asset_id] = []
                 token_txs = all_token_txs[asset_id]
@@ -415,7 +443,16 @@ def check_pending_positions(traders, logger):
                                         trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                     if tx["memo"]["status"] == "COMPLETED":
                                         trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.volume = tx["amount"] / token_divisor
+                                        # Determine divisor based on token type
+                                        if CONFIG["BLOCKCHAIN"] == "EVM":
+                                            # For EVM, check if it's USDC or stock token
+                                            if asset_id.lower() == CONFIG["USDC_ADDRESS"].lower():
+                                                tx_divisor = 10**CONFIG["USDC_DECIMALS"]
+                                            else:
+                                                tx_divisor = 10**18  # Stock tokens typically use 18 decimals
+                                        else:
+                                            tx_divisor = token_divisor
+                                        trader.volume = tx["amount"] / tx_divisor
                                         update_position(trader)
                                         logger.info(f"Buy {trader.stock} confirmed")
                                         confirmed = True
@@ -464,6 +501,8 @@ def check_pending_positions(traders, logger):
         if trader.position_status == PositionStatus.PENDING_SELL.name or trader.position_status == PositionStatus.PENDING_LIQUIDATION.name:
             # Check if the order is cancelled
             asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
+            if CONFIG["BLOCKCHAIN"] == "EVM":
+                asset_id = asset_id.lower()
             if asset_id not in all_token_txs:
                 all_token_txs[asset_id] = []
             token_txs = all_token_txs[asset_id]
@@ -514,7 +553,12 @@ def check_pending_positions(traders, logger):
                                         break
                                     if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
                                         # The order is created after the last update
-                                        divisor = SOL_LAMPORTS if CONFIG["BLOCKCHAIN"] == "SOLANA" else XCH_MOJO
+                                        if CONFIG["BLOCKCHAIN"] == "SOLANA":
+                                            divisor = SOL_LAMPORTS
+                                        elif CONFIG["BLOCKCHAIN"] == "EVM":
+                                            divisor = 10**18  # Native token has 18 decimals
+                                        else:
+                                            divisor = XCH_MOJO
                                         trader.profit += tx["amount"]/divisor - trader.total_cost
                                         trader.position_status = PositionStatus.TRADABLE.name
                                         trader.volume = 0
@@ -550,6 +594,17 @@ def get_crypto_balance():
             return 0
         except Exception as e:
             print(f"Cannot get SOL balance: {str(e)}")
+            return 0
+    elif CONFIG["BLOCKCHAIN"] == "EVM":
+        # Get native token balance (ETH/BNB) for EVM chain
+        try:
+            w3 = get_web3()
+            address = Web3.to_checksum_address(CONFIG["ADDRESS"])
+            balance_wei = w3.eth.get_balance(address)
+            # Convert from wei to native token (18 decimals)
+            return balance_wei / 10**18
+        except Exception as e:
+            print(f"Cannot get EVM native token balance: {str(e)}")
             return 0
     else:
         wallet_name = "Chia Wallet"
@@ -597,6 +652,45 @@ def get_token_balance():
             return {}
         except Exception as e:
             print(f"Cannot get Solana token balance: {str(e)}")
+            return {}
+    elif CONFIG["BLOCKCHAIN"] == "EVM":
+        # Get ERC20 token balances for EVM chain
+        try:
+            w3 = get_web3()
+            address = Web3.to_checksum_address(CONFIG["ADDRESS"])
+            token_balances = {}
+            
+            # Get USDC balance
+            usdc_address = Web3.to_checksum_address(CONFIG["USDC_ADDRESS"])
+            usdc_contract = w3.eth.contract(address=usdc_address, abi=get_erc20_abi())
+            usdc_balance = usdc_contract.functions.balanceOf(address).call()
+            usdc_decimals = CONFIG["USDC_DECIMALS"]
+            token_balances[usdc_address.lower()] = {
+                "asset_id": usdc_address,
+                "balance": usdc_balance / (10 ** usdc_decimals),
+            }
+            
+            # Get stock token balances
+            for stock in CONFIG.get("TRADING_SYMBOLS", []):
+                ticker = stock if isinstance(stock, str) else stock.get("TICKER")
+                if ticker and ticker in STOCKS:
+                    token_mint = STOCKS[ticker]["asset_id"]
+                    if token_mint:
+                        try:
+                            token_address = Web3.to_checksum_address(token_mint)
+                            token_contract = w3.eth.contract(address=token_address, abi=get_erc20_abi())
+                            balance = token_contract.functions.balanceOf(address).call()
+                            # Stock tokens typically use 18 decimals
+                            token_balances[token_mint.lower()] = {
+                                "asset_id": token_mint,
+                                "balance": balance / (10 ** 18),
+                            }
+                        except Exception as e:
+                            continue
+            
+            return token_balances
+        except Exception as e:
+            print(f"Cannot get EVM token balance: {str(e)}")
             return {}
     else:
         url = f"https://api.spacescan.io/address/token-balance/{CONFIG['ADDRESS']}"
@@ -748,9 +842,24 @@ def add_token(symbol):
 @cached(price_cache)
 def get_crypto_price(logger):
     """
-    Get the current price of the cryptocurrency (XCH or SOL)
+    Get the current price of the cryptocurrency (XCH, SOL, or USDC)
     """
     currency = CONFIG.get("CURRENCY", "XCH")
+    
+    # USDC is a stablecoin, price is approximately 1.0
+    if currency == "USDC":
+        try:
+            url = f"https://api.sharesdao.com:8443/util/get_price/{currency}"
+            response = requests.get(url, timeout=REQUEST_TIMEOUT)
+            if response.status_code == 200:
+                return response.json().get(currency, 1.0)
+            else:
+                logger.warning(f"Failed to get USDC price from API, using default 1.0")
+                return 1.0
+        except Exception as e:
+            logger.warning(f"Cannot get USDC price: {str(e)}, using default 1.0")
+            return 1.0
+    
     url = f"https://api.sharesdao.com:8443/util/get_price/{currency}"
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
@@ -778,6 +887,440 @@ def sign_message(did, message):
         elif CONFIG["BLOCKCHAIN"] == "SOLANA":
             private_key = Keypair.from_base58_string(os.environ.get("DID_PRIVATE_KEY", ""))
             return private_key.sign_message(message.encode("utf-8")).to_bytes().hex()
+        elif CONFIG["BLOCKCHAIN"] == "EVM":
+            private_key = os.environ.get("EVM_PRIVATE_KEY", "")
+            if not private_key:
+                raise ValueError("EVM_PRIVATE_KEY environment variable not set")
+            # Remove 0x prefix if present
+            if private_key.startswith("0x"):
+                private_key = private_key[2:]
+            account = Account.from_key(private_key)
+            # Encode message using encode_defunct and sign it
+            encoded_message = encode_defunct(text=message)
+            signed_message = account.sign_message(encoded_message)
+            return signed_message.signature.hex()
     except Exception as e:
         print(f"Cannot sign message {message} with DID {did}")
         raise e
+
+
+# EVM Functions
+
+def get_web3():
+    """Get Web3 instance for the configured EVM chain"""
+    if CONFIG["BLOCKCHAIN"] != "EVM":
+        raise ValueError("Not an EVM blockchain")
+    return Web3(Web3.HTTPProvider(CONFIG["RPC_URL"]))
+
+
+def send_usdc(address: str, order, token_address: str, logger):
+    """Send USDC (ERC20) transaction on EVM chain"""
+    try:
+        w3 = get_web3()
+        private_key = os.environ.get("EVM_PRIVATE_KEY", "")
+        if not private_key:
+            raise ValueError("EVM_PRIVATE_KEY environment variable not set")
+        if private_key.startswith("0x"):
+            private_key = private_key[2:]
+        
+        account = Account.from_key(private_key)
+        sender_address = account.address
+        
+        usdc_address = Web3.to_checksum_address(CONFIG["USDC_ADDRESS"])
+        recipient_address = Web3.to_checksum_address(address)
+        stock_token_address = Web3.to_checksum_address(token_address)
+        
+        # Convert amount to wei (USDC has 6 decimals for most chains, 18 for BSC)
+        usdc_decimals = CONFIG["USDC_DECIMALS"]
+        offer_amount = int(order["offer"] * (10 ** usdc_decimals))
+        request_amount = int(order["request"] * (10 ** usdc_decimals))
+        
+        # Check USDC balance
+        usdc_contract = w3.eth.contract(address=usdc_address, abi=get_erc20_abi())
+        balance = usdc_contract.functions.balanceOf(sender_address).call()
+        if balance < offer_amount:
+            logger.error(f"Insufficient USDC balance {balance}/{offer_amount}, skipping...")
+            return False
+        
+        # Build memo JSON with token_address
+        memo = json.dumps({
+            "did_id": CONFIG["DID_HEX"],
+            "customer_id": order["customer_id"],
+            "type": order.get("type", "LIMIT"),
+            "offer": offer_amount,
+            "request": request_amount,
+            "token_address": stock_token_address
+        })
+        
+        # Build transfer transaction
+        nonce = w3.eth.get_transaction_count(sender_address)
+        gas_price = w3.eth.gas_price
+        
+        # Standard ERC20 transfer - memo cannot be included in transfer data
+        # The memo will need to be tracked separately or included in an event
+        transfer_data = usdc_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
+        
+        transaction = {
+            'to': usdc_address,
+            'data': transfer_data,
+            'gas': 200000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'chainId': CONFIG["CHAIN_ID"]
+        }
+        
+        # Sign and send transaction
+        signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        
+        # Wait for transaction receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        
+        logger.info(f"Sent {offer_amount / (10 ** usdc_decimals)} USDC to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
+        # Note: Memo information is tracked separately since ERC20 transfers don't support memo directly
+        return True
+    except Exception as e:
+        logger.error(f"Error sending USDC transaction: {e}")
+        return False
+
+
+def send_stock_token(address: str, order, token_mint: str, logger):
+    """Send stock ERC20 token transaction on EVM chain (for sell orders)"""
+    try:
+        w3 = get_web3()
+        private_key = os.environ.get("EVM_PRIVATE_KEY", "")
+        if not private_key:
+            raise ValueError("EVM_PRIVATE_KEY environment variable not set")
+        if private_key.startswith("0x"):
+            private_key = private_key[2:]
+        
+        account = Account.from_key(private_key)
+        sender_address = account.address
+        
+        token_address = Web3.to_checksum_address(token_mint)
+        recipient_address = Web3.to_checksum_address(address)
+        
+        # Stock tokens typically use 18 decimals
+        token_decimals = 18
+        offer_amount = int(order["offer"] * (10 ** token_decimals))
+        request_amount = int(order["request"] * (10 ** token_decimals))
+        
+        # Check token balance
+        token_contract = w3.eth.contract(address=token_address, abi=get_erc20_abi())
+        balance = token_contract.functions.balanceOf(sender_address).call()
+        if balance < offer_amount:
+            logger.error(f"Insufficient stock token balance {balance}/{offer_amount}, skipping...")
+            return False
+        
+        # Build memo JSON with token_address
+        memo = json.dumps({
+            "did_id": CONFIG["DID_HEX"],
+            "customer_id": order["customer_id"],
+            "type": order.get("type", "LIMIT"),
+            "offer": offer_amount,
+            "request": request_amount,
+            "token_address": token_address
+        })
+        
+        # Build transfer transaction
+        nonce = w3.eth.get_transaction_count(sender_address)
+        gas_price = w3.eth.gas_price
+        
+        # Standard ERC20 transfer
+        transfer_data = token_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
+        
+        transaction = {
+            'to': token_address,
+            'data': transfer_data,
+            'gas': 200000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'chainId': CONFIG["CHAIN_ID"]
+        }
+        
+        # Sign and send transaction
+        signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        
+        # Wait for transaction receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        
+        logger.info(f"Sent {offer_amount / (10 ** token_decimals)} stock tokens to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
+        # Note: Memo information is tracked separately since ERC20 transfers don't support memo directly
+        return True
+    except Exception as e:
+        logger.error(f"Error sending stock token transaction: {e}")
+        return False
+
+
+def send_native_token(address: str, order, logger):
+    """Send native token (ETH/BNB) transaction on EVM chain"""
+    try:
+        w3 = get_web3()
+        private_key = os.environ.get("EVM_PRIVATE_KEY", "")
+        if not private_key:
+            raise ValueError("EVM_PRIVATE_KEY environment variable not set")
+        if private_key.startswith("0x"):
+            private_key = private_key[2:]
+        
+        account = Account.from_key(private_key)
+        sender_address = account.address
+        recipient_address = Web3.to_checksum_address(address)
+        
+        # Convert amount to wei (18 decimals for ETH/BNB)
+        offer_amount = int(order["offer"] * 10**18)
+        request_amount = int(order["request"] * 10**18)
+        
+        # Check balance
+        balance = w3.eth.get_balance(sender_address)
+        if balance < offer_amount:
+            logger.error(f"Insufficient native token balance {balance}/{offer_amount}, skipping...")
+            return False
+        
+        # Build memo JSON
+        memo = json.dumps({
+            "did_id": CONFIG["DID_HEX"],
+            "customer_id": order["customer_id"],
+            "type": order.get("type", "LIMIT"),
+            "offer": offer_amount,
+            "request": request_amount
+        })
+        
+        # Encode memo in transaction data
+        memo_bytes = memo.encode('utf-8')
+        memo_length = len(memo_bytes).to_bytes(4, byteorder='big')
+        memo_data = memo_length.hex() + memo_bytes.hex()
+        
+        nonce = w3.eth.get_transaction_count(sender_address)
+        gas_price = w3.eth.gas_price
+        
+        transaction = {
+            'to': recipient_address,
+            'value': offer_amount,
+            'data': '0x' + memo_data,
+            'gas': 100000,
+            'gasPrice': gas_price,
+            'nonce': nonce,
+            'chainId': CONFIG["CHAIN_ID"]
+        }
+        
+        # Sign and send transaction
+        signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
+        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        
+        # Wait for transaction receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        
+        logger.info(f"Sent {offer_amount / 10**18} {CONFIG['NATIVE_SYMBOL']} to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
+        return True
+    except Exception as e:
+        logger.error(f"Error sending native token transaction: {e}")
+        return False
+
+
+def get_erc20_abi():
+    """Get minimal ERC20 ABI for balanceOf and transfer"""
+    return [
+        {
+            "constant": True,
+            "inputs": [{"name": "_owner", "type": "address"}],
+            "name": "balanceOf",
+            "outputs": [{"name": "balance", "type": "uint256"}],
+            "type": "function"
+        },
+        {
+            "constant": False,
+            "inputs": [
+                {"name": "_to", "type": "address"},
+                {"name": "_value", "type": "uint256"}
+            ],
+            "name": "transfer",
+            "outputs": [{"name": "", "type": "bool"}],
+            "type": "function"
+        },
+        {
+            "anonymous": False,
+            "inputs": [
+                {"indexed": True, "name": "from", "type": "address"},
+                {"indexed": True, "name": "to", "type": "address"},
+                {"indexed": False, "name": "value", "type": "uint256"}
+            ],
+            "name": "Transfer",
+            "type": "event"
+        }
+    ]
+
+
+def decode_memo_from_data(data: str):
+    """Decode memo from transaction data (only for native token transfers)"""
+    try:
+        if not data or len(data) < 8:
+            return None
+        
+        # Remove 0x prefix
+        if data.startswith("0x"):
+            data = data[2:]
+        
+        # For native token transfer, memo is directly in data
+        # First 4 bytes (8 hex chars) are length
+        if len(data) >= 8:
+            memo_length = int(data[:8], 16)
+            if memo_length > 0 and len(data) >= 8 + memo_length * 2:
+                memo_hex = data[8:8 + memo_length * 2]
+                if memo_hex:
+                    memo_bytes = bytes.fromhex(memo_hex)
+                    return json.loads(memo_bytes.decode('utf-8'))
+    except Exception as e:
+        return None
+    return None
+
+
+def get_evm_txs(logger):
+    """Get native token (ETH/BNB) transactions for EVM chain"""
+    try:
+        w3 = get_web3()
+        address = Web3.to_checksum_address(CONFIG["ADDRESS"])
+        last_tx = last_checked_tx.get("EVM_NATIVE")
+        
+        # Get recent transactions
+        current_block = w3.eth.block_number
+        from_block = max(0, current_block - 10000)  # Last ~10000 blocks
+        
+        transactions = []
+        
+        # Get transactions from address
+        for i in range(from_block, current_block + 1):
+            try:
+                block = w3.eth.get_block(i, full_transactions=True)
+                for tx in block.transactions:
+                    if tx.to and tx.to.lower() == address.lower() and tx['from'].lower() != address.lower():
+                        # This is a received transaction
+                        if last_tx and tx.hash.hex() == last_tx:
+                            break
+                        
+                        tx_receipt = w3.eth.get_transaction_receipt(tx.hash)
+                        tx_obj = {
+                            "signature": tx.hash.hex(),
+                            "sent": 0,
+                            "amount": tx.value,
+                            "memo": None,
+                            "timestamp": block.timestamp,
+                            "block_number": i
+                        }
+                        
+                        # Decode memo from input data
+                        if tx.input and len(tx.input) > 2:
+                            memo = decode_memo_from_data(tx.input.hex())
+                            if memo:
+                                tx_obj["memo"] = memo
+                                if "did_id" in memo:
+                                    tx_obj["sent"] = 1
+                                transactions.append(tx_obj)
+            except Exception as e:
+                continue
+        
+        if transactions:
+            last_checked_tx["EVM_NATIVE"] = transactions[0]["signature"]
+        
+        logger.info(f"Found {len(transactions)} EVM native token transactions")
+        return transactions
+    except Exception as e:
+        logger.error(f"Failed to get EVM transactions: {str(e)}")
+        return []
+
+
+def get_erc20_token_txs(logger):
+    """Get ERC20 token (USDC and stock tokens) transactions for EVM chain"""
+    try:
+        w3 = get_web3()
+        address = Web3.to_checksum_address(CONFIG["ADDRESS"])
+        usdc_address = Web3.to_checksum_address(CONFIG["USDC_ADDRESS"])
+        token_txs = {}
+        
+        # Get transactions for USDC and stock tokens
+        tokens_to_check = [usdc_address]
+        for stock in CONFIG.get("TRADING_SYMBOLS", []):
+            ticker = stock if isinstance(stock, str) else stock.get("TICKER")
+            if ticker and ticker in STOCKS:
+                token_mint = STOCKS[ticker]["asset_id"]
+                if token_mint:
+                    tokens_to_check.append(Web3.to_checksum_address(token_mint))
+        
+        current_block = w3.eth.block_number
+        from_block = max(0, current_block - 10000)
+        
+        # Create filter for Transfer events
+        for token_address in tokens_to_check:
+            token_txs[token_address.lower()] = []
+            last_tx = last_checked_tx.get(token_address.lower())
+            
+            # Create filter for Transfer events to this address
+            try:
+                transfer_filter = w3.eth.filter({
+                    "fromBlock": from_block,
+                    "toBlock": "latest",
+                    "address": token_address,
+                    "topics": [
+                        ERC20_TRANSFER_EVENT_SIGNATURE,
+                        None,  # from
+                        "0x" + "0" * 24 + address[2:].lower()  # to (this address)
+                    ]
+                })
+                
+                events = transfer_filter.get_all_entries()
+            except Exception as e:
+                logger.warning(f"Failed to create filter for {token_address}: {e}")
+                continue
+            
+            for event in events:
+                if last_tx and event['transactionHash'].hex() == last_tx:
+                    break
+                
+                tx_hash = event['transactionHash']
+                tx = w3.eth.get_transaction(tx_hash)
+                tx_receipt = w3.eth.get_transaction_receipt(tx_hash)
+                block = w3.eth.get_block(tx_receipt.blockNumber)
+                
+                # Decode Transfer event
+                from_address = "0x" + event['topics'][1].hex()[-40:]
+                to_address = "0x" + event['topics'][2].hex()[-40:]
+                amount = int(event['data'].hex(), 16)
+                
+                tx_obj = {
+                    "signature": tx_hash.hex(),
+                    "sent": 0,
+                    "asset_id": token_address.lower(),
+                    "amount": amount,
+                    "memo": None,
+                    "timestamp": block.timestamp,
+                    "block_number": tx_receipt.blockNumber
+                }
+                
+                # For ERC20 transfers, memo is not included in the transaction data
+                # We'll need to track it separately or use event logs
+                # For now, we'll try to get memo from a separate native token transaction
+                # in the same block, or from transaction logs
+                # Note: This is a limitation - ERC20 transfers don't support memo directly
+                if tx.value == 0 and tx.input:
+                    # Try to decode as memo if it looks like JSON
+                    try:
+                        memo = decode_memo_from_data(tx.input.hex())
+                        if memo:
+                            tx_obj["memo"] = memo
+                            if "did_id" in memo:
+                                tx_obj["sent"] = 1
+                    except:
+                        pass
+                
+                # Add transaction if it has memo or if we're tracking all received transfers
+                if tx_obj["amount"] > 0:
+                    token_txs[token_address.lower()].append(tx_obj)
+            
+            if token_txs[token_address.lower()]:
+                last_checked_tx[token_address.lower()] = token_txs[token_address.lower()][0]["signature"]
+        
+        logger.info(f"Found {sum(len(txs) for txs in token_txs.values())} ERC20 token transactions")
+        return token_txs
+    except Exception as e:
+        logger.error(f"Failed to get ERC20 token transactions: {str(e)}")
+        return {}

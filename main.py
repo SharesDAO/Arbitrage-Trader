@@ -1,5 +1,6 @@
 import calendar
 import json
+import os
 import time
 
 import click
@@ -12,7 +13,7 @@ from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
 from util.crypto import get_crypto_price, sign_message
-from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
+from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus, EVM_CHAINS
 from util.db import update_position
 from util.stock import STOCKS, get_pool_list, get_stock_price
 
@@ -29,30 +30,74 @@ def cli():
     pass
 
 
-def load_config(did: str, strategy: str, blockchain: str = "CHIA", wallet: int = None):
+def load_config(did: str, strategy: str, blockchain: str = "CHIA", wallet: int = None, evm_chain: str = None):
     CONFIG["BLOCKCHAIN"] = blockchain
-    CONFIG["CURRENCY"] = "XCH" if blockchain == "CHIA" else "SOL"
     
     if blockchain == "CHIA":
+        CONFIG["CURRENCY"] = "XCH"
         if wallet is None:
             raise ValueError("Wallet fingerprint is required for Chia blockchain")
         CONFIG["WALLET_FINGERPRINT"] = wallet
         CONFIG["DID_HEX"] = did[2:] if did.startswith("0x") else did
         STOCKS.update(get_pool_list(1))
-    else:  # SOLANA
+    elif blockchain == "SOLANA":
+        CONFIG["CURRENCY"] = "SOL"
         CONFIG["DID_HEX"] = did
         STOCKS.update(get_pool_list(2))
+    elif blockchain == "EVM":
+        if evm_chain is None:
+            raise ValueError("Chain parameter is required for EVM blockchain (ethereum/base/arbitrum/bsc)")
+        if evm_chain.lower() not in EVM_CHAINS:
+            raise ValueError(f"Unsupported EVM chain: {evm_chain}. Supported chains: {list(EVM_CHAINS.keys())}")
+        CONFIG["CURRENCY"] = "USDC"
+        CONFIG["EVM_CHAIN"] = evm_chain.lower()
+        chain_config = EVM_CHAINS[CONFIG["EVM_CHAIN"]]
+        CONFIG["CHAIN_ID"] = chain_config["chain_id"]
+        CONFIG["NATIVE_SYMBOL"] = chain_config["native_symbol"]
+        CONFIG["USDC_ADDRESS"] = chain_config["usdc_address"]
+        CONFIG["USDC_DECIMALS"] = chain_config["usdc_decimals"]
+        
+        # Try to use Alchemy API key if available (shared across all chains), otherwise use RPC_URL
+        alchemy_api_key = os.environ.get("ALCHEMY_API_KEY")
+        
+        if alchemy_api_key:
+            # Build Alchemy URL using shared API key
+            alchemy_urls = {
+                "ethereum": "https://eth-mainnet.g.alchemy.com/v2",
+                "base": "https://base-mainnet.g.alchemy.com/v2",
+                "arbitrum": "https://arb-mainnet.g.alchemy.com/v2",
+                "bsc": "https://bnb-mainnet.g.alchemy.com/v2"
+            }
+            base_url = alchemy_urls.get(evm_chain.lower())
+            if base_url:
+                CONFIG["RPC_URL"] = f"{base_url}/{alchemy_api_key}"
+            else:
+                # Fallback to RPC_URL if chain not supported by Alchemy
+                CONFIG["RPC_URL"] = os.environ.get(chain_config["rpc_env"])
+        else:
+            CONFIG["RPC_URL"] = os.environ.get(chain_config["rpc_env"])
+        
+        if not CONFIG["RPC_URL"]:
+            rpc_msg = f"RPC URL not found. Please set {chain_config['rpc_env']} environment variable"
+            rpc_msg += " or ALCHEMY_API_KEY for Alchemy API (shared across all chains)"
+            raise ValueError(rpc_msg)
+        CONFIG["DID_HEX"] = did
+        STOCKS.update(get_pool_list(6))
+    else:
+        raise ValueError(f"Unsupported blockchain: {blockchain}")
 
     now = calendar.timegm(time.gmtime())
     
     if blockchain == "CHIA":
         signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
-    else:  # SOLANA
+    elif blockchain == "SOLANA":
+        signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
+    elif blockchain == "EVM":
         signature = sign_message(CONFIG["DID_HEX"], f"SharesDAO|Login|{now}")
     
     req = {"did_id": CONFIG["DID_HEX"], "timestamp": now, "signature": signature}
     url = "https://www.sharesdao.com:8443/user/get"
-    logger.info(f"Loading trading stategy {strategy} for user {did} on {blockchain}")
+    logger.info(f"Loading trading stategy {strategy} for user {did} on {blockchain}" + (f" ({evm_chain})" if evm_chain else ""))
     response = requests.post(url, data=json.dumps(req), timeout=REQUEST_TIMEOUT)
     if response.status_code == 200:
         strategy_config = json.loads(response.json()["trading_strategy"])[strategy]
@@ -68,12 +113,17 @@ def load_config(did: str, strategy: str, blockchain: str = "CHIA", wallet: int =
             elif CONFIG["BLOCKCHAIN"] == "SOLANA":
                 CONFIG["CRYPTO_MIN"] = CONFIG.get("SOL_MIN", 0)
                 CONFIG["CRYPTO_MAX"] = CONFIG.get("SOL_MAX", 0)
+            elif CONFIG["BLOCKCHAIN"] == "EVM":
+                CONFIG["CRYPTO_MIN"] = CONFIG.get("USDC_MIN", 0)
+                CONFIG["CRYPTO_MAX"] = CONFIG.get("USDC_MAX", 0)
         elif strategy == "DCA":
             CONFIG["SYMBOLS"] = [s for s in CONFIG["TRADING_SYMBOLS"]]
             if CONFIG["BLOCKCHAIN"] == "CHIA":
                 CONFIG["INVESTED_CRYPTO"] = CONFIG.get("INVESTED_XCH", 0)
             elif CONFIG["BLOCKCHAIN"] == "SOLANA":
                 CONFIG["INVESTED_CRYPTO"] = CONFIG.get("INVESTED_SOL", 0)
+            elif CONFIG["BLOCKCHAIN"] == "EVM":
+                CONFIG["INVESTED_CRYPTO"] = CONFIG.get("INVESTED_USDC", 0)
         logger.info(f"Loaded user trading strategy: {CONFIG}")
     else:
         logger.error(f"Failed to get user trading strategy: {response.text}")
@@ -105,16 +155,23 @@ def load_config(did: str, strategy: str, blockchain: str = "CHIA", wallet: int =
 @click.option(
     "-b",
     "--blockchain",
-    help="Blockchain to use: CHIA or SOLANA",
+    help="Blockchain to use: CHIA, SOLANA, or EVM",
     type=str,
     default="SOLANA"
 )
-def run(did: str, strategy: str, blockchain: str, wallet: int = None):
+@click.option(
+    "-c",
+    "--chain",
+    help="EVM chain to use (required for EVM blockchain): ethereum, base, arbitrum, or bsc",
+    type=str,
+    required=False
+)
+def run(did: str, strategy: str, blockchain: str, wallet: int = None, chain: str = None):
     if strategy.lower() == "dca":
-        load_config(did, StrategyType.DCA.value, blockchain.upper(), wallet)
+        load_config(did, StrategyType.DCA.value, blockchain.upper(), wallet, chain)
         execute_dca(logger)
     if strategy.lower() == "grid":
-        load_config(did, StrategyType.GRID.value, blockchain.upper(), wallet)
+        load_config(did, StrategyType.GRID.value, blockchain.upper(), wallet, chain)
         execute_grid(logger)
 
 
@@ -150,12 +207,19 @@ def run(did: str, strategy: str, blockchain: str, wallet: int = None):
 @click.option(
     "-b",
     "--blockchain",
-    help="Blockchain to use: CHIA or SOLANA",
+    help="Blockchain to use: CHIA, SOLANA, or EVM",
     type=str,
     default="CHIA"
 )
-def liquidate(did: str, ticker: str, strategy: str, blockchain: str, wallet: int = None):
-    load_config(did, strategy.upper(), blockchain.upper(), wallet)
+@click.option(
+    "-c",
+    "--chain",
+    help="EVM chain to use (required for EVM blockchain): ethereum, base, arbitrum, or bsc",
+    type=str,
+    required=False
+)
+def liquidate(did: str, ticker: str, strategy: str, blockchain: str, wallet: int = None, chain: str = None):
+    load_config(did, strategy.upper(), blockchain.upper(), wallet, chain)
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)
         if stock.volume >= 0:
@@ -219,12 +283,19 @@ def liquidate(did: str, ticker: str, strategy: str, blockchain: str, wallet: int
 @click.option(
     "-b",
     "--blockchain",
-    help="Blockchain to use: CHIA or SOLANA",
+    help="Blockchain to use: CHIA, SOLANA, or EVM",
     type=str,
     default="CHIA"
 )
-def reset(volume: str, ticker: str, strategy: str, did: str, blockchain: str, wallet: int = None):
-    load_config(did, strategy.upper(), blockchain.upper(), wallet)
+@click.option(
+    "-c",
+    "--chain",
+    help="EVM chain to use (required for EVM blockchain): ethereum, base, arbitrum, or bsc",
+    type=str,
+    required=False
+)
+def reset(volume: str, ticker: str, strategy: str, did: str, blockchain: str, wallet: int = None, chain: str = None):
+    load_config(did, strategy.upper(), blockchain.upper(), wallet, chain)
     if strategy.lower() == "dca":
         stock = DCAStockTrader(ticker, logger)
         if volume is not None:
