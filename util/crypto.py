@@ -1087,8 +1087,7 @@ def send_usdc(address: str, order, token_address: str, logger):
         nonce = w3.eth.get_transaction_count(sender_address)
         gas_params = get_gas_params(w3)
         
-        # Standard ERC20 transfer - memo cannot be included in transfer data
-        # The memo will need to be tracked separately or included in an event
+        # Standard ERC20 transfer - encode transfer function call
         # Use encode_abi for web3.py v7+, fallback to encodeABI for older versions
         try:
             transfer_data = usdc_contract.encode_abi(abi_element_identifier='transfer', args=[recipient_address, offer_amount])
@@ -1096,15 +1095,53 @@ def send_usdc(address: str, order, token_address: str, logger):
             # Fallback for older web3.py versions
             transfer_data = usdc_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
         
+        # Encode memo and append to transaction data
+        memo_bytes = memo.encode('utf-8')
+        memo_encoded = memo_bytes.hex()
+        
+        # Append memo as additional data after the standard transfer call
+        # Remove 0x prefix if present, then append memo
+        if isinstance(transfer_data, bytes):
+            transfer_data_hex = transfer_data.hex()
+        elif transfer_data.startswith('0x'):
+            transfer_data_hex = transfer_data[2:]
+        else:
+            transfer_data_hex = transfer_data
+        
+        transaction_data = '0x' + transfer_data_hex + memo_encoded
+        
         transaction = {
             'to': usdc_address,
-            'data': transfer_data,
-            'gas': 200000,
+            'data': transaction_data,
             'nonce': nonce,
             'chainId': CONFIG["CHAIN_ID"]
         }
         # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
         transaction.update(gas_params)
+        
+        # Estimate gas dynamically for token transfer with memo
+        try:
+            estimated_gas = w3.eth.estimate_gas(transaction)
+            # Add buffer based on chain type - L2s need higher buffers
+            evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+            if evm_chain == "arbitrum":
+                gas_limit = int(estimated_gas * 1.4)  # 40% buffer for Arbitrum
+            elif evm_chain == "base":
+                gas_limit = int(estimated_gas * 1.35)  # 35% buffer for Base
+            elif evm_chain == "bsc":
+                gas_limit = int(estimated_gas * 1.2)  # 20% buffer for BNB
+            else:
+                gas_limit = int(estimated_gas * 1.25)  # 25% buffer for Ethereum
+        except Exception as e:
+            logger.warning(f"Failed to estimate gas for USDC transfer with memo: {e}")
+            # Fallback to safe gas limits
+            evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+            if evm_chain in ["arbitrum", "base"]:
+                gas_limit = 150000
+            else:
+                gas_limit = 100000
+        
+        transaction['gas'] = gas_limit
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
@@ -1116,7 +1153,6 @@ def send_usdc(address: str, order, token_address: str, logger):
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
         
         logger.info(f"Sent {offer_amount / (10 ** usdc_decimals)} USDC to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
-        # Note: Memo information is tracked separately since ERC20 transfers don't support memo directly
         return True
     except Exception as e:
         logger.error(f"Error sending USDC transaction: {e}")
@@ -1166,7 +1202,7 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         nonce = w3.eth.get_transaction_count(sender_address)
         gas_params = get_gas_params(w3)
         
-        # Standard ERC20 transfer
+        # Standard ERC20 transfer - encode transfer function call
         # Use encode_abi for web3.py v7+, fallback to encodeABI for older versions
         try:
             transfer_data = token_contract.encode_abi(abi_element_identifier='transfer', args=[recipient_address, offer_amount])
@@ -1174,15 +1210,53 @@ def send_stock_token(address: str, order, token_mint: str, logger):
             # Fallback for older web3.py versions
             transfer_data = token_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
         
+        # Encode memo and append to transaction data
+        memo_bytes = memo.encode('utf-8')
+        memo_encoded = memo_bytes.hex()
+        
+        # Append memo as additional data after the standard transfer call
+        # Remove 0x prefix if present, then append memo
+        if isinstance(transfer_data, bytes):
+            transfer_data_hex = transfer_data.hex()
+        elif transfer_data.startswith('0x'):
+            transfer_data_hex = transfer_data[2:]
+        else:
+            transfer_data_hex = transfer_data
+        
+        transaction_data = '0x' + transfer_data_hex + memo_encoded
+        
         transaction = {
             'to': token_address,
-            'data': transfer_data,
-            'gas': 200000,
+            'data': transaction_data,
             'nonce': nonce,
             'chainId': CONFIG["CHAIN_ID"]
         }
         # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
         transaction.update(gas_params)
+        
+        # Estimate gas dynamically for token transfer with memo
+        try:
+            estimated_gas = w3.eth.estimate_gas(transaction)
+            # Add buffer based on chain type - L2s need higher buffers
+            evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+            if evm_chain == "arbitrum":
+                gas_limit = int(estimated_gas * 1.4)  # 40% buffer for Arbitrum
+            elif evm_chain == "base":
+                gas_limit = int(estimated_gas * 1.35)  # 35% buffer for Base
+            elif evm_chain == "bsc":
+                gas_limit = int(estimated_gas * 1.2)  # 20% buffer for BNB
+            else:
+                gas_limit = int(estimated_gas * 1.25)  # 25% buffer for Ethereum
+        except Exception as e:
+            logger.warning(f"Failed to estimate gas for stock token transfer with memo: {e}")
+            # Fallback to safe gas limits
+            evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+            if evm_chain in ["arbitrum", "base"]:
+                gas_limit = 150000
+            else:
+                gas_limit = 100000
+        
+        transaction['gas'] = gas_limit
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
@@ -1194,7 +1268,6 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
         
         logger.info(f"Sent {offer_amount / (10 ** token_decimals)} stock tokens to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
-        # Note: Memo information is tracked separately since ERC20 transfers don't support memo directly
         return True
     except Exception as e:
         logger.error(f"Error sending stock token transaction: {e}")
@@ -1303,7 +1376,7 @@ def get_erc20_abi():
 
 
 def decode_memo_from_data(data: str):
-    """Decode memo from transaction data (only for native token transfers)"""
+    """Decode memo from transaction data (for native token transfers)"""
     try:
         if not data or len(data) < 8:
             return None
@@ -1321,6 +1394,42 @@ def decode_memo_from_data(data: str):
                 if memo_hex:
                     memo_bytes = bytes.fromhex(memo_hex)
                     return json.loads(memo_bytes.decode('utf-8'))
+    except Exception as e:
+        return None
+    return None
+
+
+def decode_memo_from_erc20_data(data: str):
+    """Decode memo from ERC20 transfer transaction data"""
+    try:
+        if not data or len(data) < 138:  # Minimum length for ERC20 transfer (4 bytes selector + 32 bytes address + 32 bytes amount = 68 bytes = 136 hex chars)
+            return None
+        
+        # Remove 0x prefix
+        if data.startswith("0x"):
+            data = data[2:]
+        
+        # ERC20 transfer function signature is 0xa9059cbb (4 bytes)
+        # Then 32 bytes for recipient address (padded)
+        # Then 32 bytes for amount (padded)
+        # Then memo data follows
+        
+        # Standard ERC20 transfer is 68 bytes (136 hex chars)
+        # Everything after that is memo
+        if len(data) > 136:
+            memo_hex = data[136:]  # Skip the standard transfer data
+            if memo_hex:
+                try:
+                    memo_bytes = bytes.fromhex(memo_hex)
+                    memo_text = memo_bytes.decode('utf-8')
+                    return json.loads(memo_text)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    # Try to decode as raw text if JSON parsing fails
+                    try:
+                        memo_bytes = bytes.fromhex(memo_hex)
+                        return {"raw_memo": memo_bytes.decode('utf-8', errors='ignore')}
+                    except:
+                        return None
     except Exception as e:
         return None
     return None
@@ -1414,12 +1523,21 @@ def get_erc20_token_txs(logger):
                     # Decode Transfer event
                     amount = int(event['data'].hex(), 16)
                     
+                    # Try to decode memo from transaction data
+                    memo = None
+                    try:
+                        tx_obj_full = w3.eth.get_transaction(tx_hash)
+                        if tx_obj_full and tx_obj_full.input:
+                            memo = decode_memo_from_erc20_data(tx_obj_full.input.hex())
+                    except Exception as e:
+                        logger.debug(f"Failed to decode memo from transaction {tx_hash.hex()}: {e}")
+                    
                     tx_obj = {
                         "signature": tx_hash.hex(),
                         "sent": 0,
                         "asset_id": token_address.lower(),
                         "amount": amount,
-                        "memo": None,  # Memo is not in ERC20 transfers, handled separately
+                        "memo": memo,
                         "timestamp": block_timestamp,
                         "block_number": block_number
                     }
