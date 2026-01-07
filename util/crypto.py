@@ -31,9 +31,10 @@ from spl.token.constants import TOKEN_PROGRAM_ID
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
-tx_cache = TTLCache(maxsize=100, ttl=30)
+tx_cache = TTLCache(maxsize=1000, ttl=300)  # Increased cache size for block timestamps
 token_cache = TTLCache(maxsize=10, ttl=10)
 last_checked_tx = {}
+block_timestamp_cache = {}  # Cache for block timestamps to avoid repeated RPC calls
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
 CAT_MOJO = 1000
@@ -400,9 +401,10 @@ def check_pending_positions(traders, logger):
         SOL_LAMPORTS = SOLANA_DECIAML  # 10^9 lamports in 1 SOL
         token_divisor = SOLANA_DECIAML
     elif CONFIG["BLOCKCHAIN"] == "EVM":
-        crypto_txs = get_evm_txs(logger)
+        # For EVM, we don't need native token transactions since orders use ERC20 tokens (USDC/stock tokens)
+        crypto_txs = []  # Skip native token tx fetching for EVM
         all_token_txs = get_erc20_token_txs(logger)
-        logger.info(f"Fetched {len(crypto_txs)} EVM native token txs.")
+        logger.info(f"Fetched {sum(len(txs) for txs in all_token_txs.values())} ERC20 token txs.")
         # Token divisor will be determined per token (USDC uses CONFIG["USDC_DECIMALS"], stock tokens typically use 18)
         token_divisor = 10**CONFIG.get("USDC_DECIMALS", 18)  # Default to USDC decimals
     else:
@@ -1266,56 +1268,9 @@ def decode_memo_from_data(data: str):
 
 def get_evm_txs(logger):
     """Get native token (ETH/BNB) transactions for EVM chain"""
-    try:
-        w3 = get_web3()
-        address = Web3.to_checksum_address(CONFIG["ADDRESS"])
-        last_tx = last_checked_tx.get("EVM_NATIVE")
-        
-        # Get recent transactions
-        current_block = w3.eth.block_number
-        from_block = max(0, current_block - 10000)  # Last ~10000 blocks
-        
-        transactions = []
-        
-        # Get transactions from address
-        for i in range(from_block, current_block + 1):
-            try:
-                block = w3.eth.get_block(i, full_transactions=True)
-                for tx in block.transactions:
-                    if tx.to and tx.to.lower() == address.lower() and tx['from'].lower() != address.lower():
-                        # This is a received transaction
-                        if last_tx and tx.hash.hex() == last_tx:
-                            break
-                        
-                        tx_receipt = w3.eth.get_transaction_receipt(tx.hash)
-                        tx_obj = {
-                            "signature": tx.hash.hex(),
-                            "sent": 0,
-                            "amount": tx.value,
-                            "memo": None,
-                            "timestamp": block.timestamp,
-                            "block_number": i
-                        }
-                        
-                        # Decode memo from input data
-                        if tx.input and len(tx.input) > 2:
-                            memo = decode_memo_from_data(tx.input.hex())
-                            if memo:
-                                tx_obj["memo"] = memo
-                                if "did_id" in memo:
-                                    tx_obj["sent"] = 1
-                                transactions.append(tx_obj)
-            except Exception as e:
-                continue
-        
-        if transactions:
-            last_checked_tx["EVM_NATIVE"] = transactions[0]["signature"]
-        
-        logger.info(f"Found {len(transactions)} EVM native token transactions")
-        return transactions
-    except Exception as e:
-        logger.error(f"Failed to get EVM transactions: {str(e)}")
-        return []
+    # For EVM, orders use ERC20 tokens, so we don't need native token transactions
+    # This function is kept for compatibility but returns empty list for EVM
+    return []
 
 
 def get_erc20_token_txs(logger):
@@ -1336,7 +1291,9 @@ def get_erc20_token_txs(logger):
                     tokens_to_check.append(Web3.to_checksum_address(token_mint))
         
         current_block = w3.eth.block_number
-        from_block = max(0, current_block - 10000)
+        # Reduce block range for better performance (1000 blocks instead of 10000)
+        # This covers approximately 2-3 hours of transactions on most EVM chains
+        from_block = max(0, current_block - 1000)
         
         # Create filter for Transfer events
         for token_address in tokens_to_check:
@@ -1361,52 +1318,64 @@ def get_erc20_token_txs(logger):
                 logger.warning(f"Failed to create filter for {token_address}: {e}")
                 continue
             
+            # Stop early if we found the last checked transaction
+            found_last_tx = False
+            events_to_process = []
+            
+            # First pass: collect events until we find last_tx
             for event in events:
                 if last_tx and event['transactionHash'].hex() == last_tx:
+                    found_last_tx = True
                     break
-                
+                events_to_process.append(event)
+            
+            # Process events in reverse order (newest first) and stop after processing a reasonable number
+            # Limit to last 50 events for performance
+            events_to_process = events_to_process[:50]
+            
+            # Batch process events
+            for event in reversed(events_to_process):
                 tx_hash = event['transactionHash']
-                tx = w3.eth.get_transaction(tx_hash)
-                tx_receipt = w3.eth.get_transaction_receipt(tx_hash)
-                block = w3.eth.get_block(tx_receipt.blockNumber)
-                
-                # Decode Transfer event
-                from_address = "0x" + event['topics'][1].hex()[-40:]
-                to_address = "0x" + event['topics'][2].hex()[-40:]
-                amount = int(event['data'].hex(), 16)
-                
-                tx_obj = {
-                    "signature": tx_hash.hex(),
-                    "sent": 0,
-                    "asset_id": token_address.lower(),
-                    "amount": amount,
-                    "memo": None,
-                    "timestamp": block.timestamp,
-                    "block_number": tx_receipt.blockNumber
-                }
-                
-                # For ERC20 transfers, memo is not included in the transaction data
-                # We'll need to track it separately or use event logs
-                # For now, we'll try to get memo from a separate native token transaction
-                # in the same block, or from transaction logs
-                # Note: This is a limitation - ERC20 transfers don't support memo directly
-                if tx.value == 0 and tx.input:
-                    # Try to decode as memo if it looks like JSON
-                    try:
-                        memo = decode_memo_from_data(tx.input.hex())
-                        if memo:
-                            tx_obj["memo"] = memo
-                            if "did_id" in memo:
-                                tx_obj["sent"] = 1
-                    except:
-                        pass
-                
-                # Add transaction if it has memo or if we're tracking all received transfers
-                if tx_obj["amount"] > 0:
-                    token_txs[token_address.lower()].append(tx_obj)
+                try:
+                    # Get receipt (faster than full transaction)
+                    tx_receipt = w3.eth.get_transaction_receipt(tx_hash)
+                    
+                    # Get block info only once per block (cache block timestamps)
+                    block_number = tx_receipt.blockNumber
+                    block_cache_key = f"block_{block_number}"
+                    if block_cache_key not in tx_cache:
+                        try:
+                            block = w3.eth.get_block(block_number, full_transactions=False)
+                            tx_cache[block_cache_key] = block.timestamp
+                        except:
+                            tx_cache[block_cache_key] = int(time.time())
+                    block_timestamp = tx_cache[block_cache_key]
+                    
+                    # Decode Transfer event
+                    amount = int(event['data'].hex(), 16)
+                    
+                    tx_obj = {
+                        "signature": tx_hash.hex(),
+                        "sent": 0,
+                        "asset_id": token_address.lower(),
+                        "amount": amount,
+                        "memo": None,  # Memo is not in ERC20 transfers, handled separately
+                        "timestamp": block_timestamp,
+                        "block_number": block_number
+                    }
+                    
+                    # Add transaction if amount > 0
+                    if tx_obj["amount"] > 0:
+                        token_txs[token_address.lower()].append(tx_obj)
+                except Exception as e:
+                    logger.debug(f"Failed to process event {event.get('transactionHash', 'unknown')}: {e}")
+                    continue
             
             if token_txs[token_address.lower()]:
                 last_checked_tx[token_address.lower()] = token_txs[token_address.lower()][0]["signature"]
+            elif found_last_tx:
+                # If we found last_tx but no new transactions, keep the last_tx marker
+                pass
         
         logger.info(f"Found {sum(len(txs) for txs in token_txs.values())} ERC20 token transactions")
         return token_txs
