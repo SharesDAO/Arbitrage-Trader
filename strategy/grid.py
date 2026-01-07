@@ -43,6 +43,11 @@ class GridStockTrader(StockTrader):
         if order_value_usd < 5.0:
             self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping buy order for {self.stock}")
             return
+        # Calculate volume: crypto_volume (USDC) / buy_price (USDC per stock token) = stock token amount
+        # For EVM chains, we need to account for decimal differences:
+        # - USDC typically has 6 decimals (or 18 for BSC)
+        # - Stock tokens typically have 18 decimals
+        # The volume calculation here is in human-readable units, conversion happens in send_asset
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.ticker]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock):

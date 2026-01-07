@@ -1060,8 +1060,11 @@ def send_usdc(address: str, order, token_address: str, logger):
         
         # Convert amount to wei (USDC has 6 decimals for most chains, 18 for BSC)
         usdc_decimals = CONFIG["USDC_DECIMALS"]
+        # offer is USDC amount, use USDC decimals
         offer_amount = int(order["offer"] * (10 ** usdc_decimals))
-        request_amount = int(order["request"] * (10 ** usdc_decimals))
+        # request is stock token amount, use stock token decimals (typically 18)
+        stock_token_decimals = 18  # Stock tokens typically use 18 decimals
+        request_amount = int(order["request"] * (10 ** stock_token_decimals))
         
         # Check USDC balance
         usdc_contract = w3.eth.contract(address=usdc_address, abi=get_erc20_abi())
@@ -1138,8 +1141,9 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         
         # Stock tokens typically use 18 decimals
         token_decimals = 18
+        usdc_decimals = CONFIG["USDC_DECIMALS"]
         offer_amount = int(order["offer"] * (10 ** token_decimals))
-        request_amount = int(order["request"] * (10 ** token_decimals))
+        request_amount = int(order["request"] * (10 ** usdc_decimals))
         
         # Check token balance
         token_contract = w3.eth.contract(address=token_address, abi=get_erc20_abi())
