@@ -1004,6 +1004,43 @@ def get_web3():
     return Web3(Web3.HTTPProvider(CONFIG["RPC_URL"]))
 
 
+def get_gas_params(w3):
+    """Get gas parameters for EVM transaction (supports both legacy and EIP-1559)"""
+    try:
+        # Try to get latest block to check if EIP-1559 is supported
+        latest_block = w3.eth.get_block('latest')
+        
+        # Check if baseFeePerGas exists (indicates EIP-1559 support)
+        if 'baseFeePerGas' in latest_block and latest_block['baseFeePerGas'] is not None:
+            # Use EIP-1559 gas pricing
+            base_fee = latest_block['baseFeePerGas']
+            # Set maxPriorityFeePerGas (tip to miner, typically 1-2 gwei)
+            max_priority_fee = w3.to_wei(2, 'gwei')  # 2 gwei priority fee
+            # Set maxFeePerGas to baseFee * 2 + priorityFee to ensure it's high enough
+            max_fee_per_gas = base_fee * 2 + max_priority_fee
+            
+            return {
+                'maxFeePerGas': max_fee_per_gas,
+                'maxPriorityFeePerGas': max_priority_fee,
+                'type': 2  # EIP-1559 transaction type
+            }
+        else:
+            # Legacy gas pricing
+            gas_price = w3.eth.gas_price
+            # Add 20% buffer to ensure transaction goes through
+            gas_price = int(gas_price * 1.2)
+            return {
+                'gasPrice': gas_price
+            }
+    except Exception as e:
+        # Fallback to legacy gas pricing if there's any error
+        gas_price = w3.eth.gas_price
+        gas_price = int(gas_price * 1.2)  # Add 20% buffer
+        return {
+            'gasPrice': gas_price
+        }
+
+
 def send_usdc(address: str, order, token_address: str, logger):
     """Send USDC (ERC20) transaction on EVM chain"""
     try:
@@ -1045,7 +1082,7 @@ def send_usdc(address: str, order, token_address: str, logger):
         
         # Build transfer transaction
         nonce = w3.eth.get_transaction_count(sender_address)
-        gas_price = w3.eth.gas_price
+        gas_params = get_gas_params(w3)
         
         # Standard ERC20 transfer - memo cannot be included in transfer data
         # The memo will need to be tracked separately or included in an event
@@ -1060,10 +1097,11 @@ def send_usdc(address: str, order, token_address: str, logger):
             'to': usdc_address,
             'data': transfer_data,
             'gas': 200000,
-            'gasPrice': gas_price,
             'nonce': nonce,
             'chainId': CONFIG["CHAIN_ID"]
         }
+        # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
+        transaction.update(gas_params)
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
@@ -1122,7 +1160,7 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         
         # Build transfer transaction
         nonce = w3.eth.get_transaction_count(sender_address)
-        gas_price = w3.eth.gas_price
+        gas_params = get_gas_params(w3)
         
         # Standard ERC20 transfer
         # Use encode_abi for web3.py v7+, fallback to encodeABI for older versions
@@ -1136,10 +1174,11 @@ def send_stock_token(address: str, order, token_mint: str, logger):
             'to': token_address,
             'data': transfer_data,
             'gas': 200000,
-            'gasPrice': gas_price,
             'nonce': nonce,
             'chainId': CONFIG["CHAIN_ID"]
         }
+        # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
+        transaction.update(gas_params)
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
@@ -1197,17 +1236,18 @@ def send_native_token(address: str, order, logger):
         memo_data = memo_length.hex() + memo_bytes.hex()
         
         nonce = w3.eth.get_transaction_count(sender_address)
-        gas_price = w3.eth.gas_price
+        gas_params = get_gas_params(w3)
         
         transaction = {
             'to': recipient_address,
             'value': offer_amount,
             'data': '0x' + memo_data,
             'gas': 100000,
-            'gasPrice': gas_price,
             'nonce': nonce,
             'chainId': CONFIG["CHAIN_ID"]
         }
+        # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
+        transaction.update(gas_params)
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
