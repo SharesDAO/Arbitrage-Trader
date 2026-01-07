@@ -46,6 +46,7 @@ class GridStockTrader(StockTrader):
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
         if not send_asset(STOCKS[self.ticker]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock):
+            self.logger.error(f"Failed to send buy order for {self.stock}")
             # Failed to send order
             return
         self.volume = volume

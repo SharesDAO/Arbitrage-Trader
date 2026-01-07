@@ -462,42 +462,83 @@ def check_pending_positions(traders, logger):
             # Check if the order is cancelled
             if confirmed:
                 continue
-            for tx in crypto_txs:
-                if tx["sent"] == 0:
-                    try:
-                        # Check if the order is cancelled
-                        logger.info(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
-                        if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
-                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                if tx["memo"]["status"] == "CANCELLED":
-                                    if trader.type == StrategyType.DCA or (
-                                            trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
-                                        last_trade = get_last_trade(trader.stock)
-                                        trader.volume -= last_trade[4]
-                                        trader.total_cost -= last_trade[5]
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        if trader.type == StrategyType.DCA:
-                                            trader.buy_count -= 1
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        delete_trade(last_trade[0])
-                                        last_trade = get_last_trade(trader.stock)
-                                        if last_trade is None or last_trade[2] == 'SELL':
-                                            trader.last_buy_price = 0
-                                            trader.avg_price = 0
-                                            trader.volume = 0
-                                            trader.total_cost = 0
-                                        else:
-                                            trader.avg_price = trader.total_cost / trader.volume
-                                            trader.last_buy_price = last_trade[3]
-                                        update_position(trader)
-                                        confirmed = True
-                                        logger.info(f"Buy {trader.stock} cancelled")
-                                        break
-                    except Exception as e:
-                        logger.error(f"Failed to check buy cancellation: {str(e)}")
-                        continue
+            # For EVM, buy orders use USDC (ERC20), so check USDC and stock token transactions instead of native token
+            if CONFIG["BLOCKCHAIN"] == "EVM":
+                # Check USDC transactions for cancellation
+                usdc_address = CONFIG["USDC_ADDRESS"].lower()
+                if usdc_address in all_token_txs:
+                    for tx in all_token_txs[usdc_address]:
+                        if tx["sent"] == 0:
+                            try:
+                                if tx["memo"] and "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
+                                    if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                            trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                                        if tx["memo"]["status"] == "CANCELLED":
+                                            if trader.type == StrategyType.DCA or (
+                                                    trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
+                                                last_trade = get_last_trade(trader.stock)
+                                                trader.volume -= last_trade[4]
+                                                trader.total_cost -= last_trade[5]
+                                                trader.position_status = PositionStatus.TRADABLE.name
+                                                if trader.type == StrategyType.DCA:
+                                                    trader.buy_count -= 1
+                                                trader.last_updated = datetime.now()
+                                                update_position(trader)
+                                                delete_trade(last_trade[0])
+                                                last_trade = get_last_trade(trader.stock)
+                                                if last_trade is None or last_trade[2] == 'SELL':
+                                                    trader.last_buy_price = 0
+                                                    trader.avg_price = 0
+                                                    trader.volume = 0
+                                                    trader.total_cost = 0
+                                                else:
+                                                    trader.avg_price = trader.total_cost / trader.volume
+                                                    trader.last_buy_price = last_trade[3]
+                                                update_position(trader)
+                                                confirmed = True
+                                                logger.info(f"Buy {trader.stock} cancelled")
+                                                break
+                            except Exception as e:
+                                logger.error(f"Failed to check buy cancellation: {str(e)}")
+                                continue
+            else:
+                # For non-EVM chains, check native token transactions
+                for tx in crypto_txs:
+                    if tx["sent"] == 0:
+                        try:
+                            # Check if the order is cancelled
+                            logger.info(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
+                            if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
+                                if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                                    if tx["memo"]["status"] == "CANCELLED":
+                                        if trader.type == StrategyType.DCA or (
+                                                trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
+                                            last_trade = get_last_trade(trader.stock)
+                                            trader.volume -= last_trade[4]
+                                            trader.total_cost -= last_trade[5]
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            if trader.type == StrategyType.DCA:
+                                                trader.buy_count -= 1
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            delete_trade(last_trade[0])
+                                            last_trade = get_last_trade(trader.stock)
+                                            if last_trade is None or last_trade[2] == 'SELL':
+                                                trader.last_buy_price = 0
+                                                trader.avg_price = 0
+                                                trader.volume = 0
+                                                trader.total_cost = 0
+                                            else:
+                                                trader.avg_price = trader.total_cost / trader.volume
+                                                trader.last_buy_price = last_trade[3]
+                                            update_position(trader)
+                                            confirmed = True
+                                            logger.info(f"Buy {trader.stock} cancelled")
+                                            break
+                        except Exception as e:
+                            logger.error(f"Failed to check buy cancellation: {str(e)}")
+                            continue
         if trader.position_status == PositionStatus.PENDING_SELL.name or trader.position_status == PositionStatus.PENDING_LIQUIDATION.name:
             # Check if the order is cancelled
             asset_id = STOCKS[trader.ticker]["asset_id"].lower() if CONFIG["BLOCKCHAIN"] == "CHIA" else STOCKS[trader.ticker]["asset_id"]
@@ -527,53 +568,101 @@ def check_pending_positions(traders, logger):
             if confirmed:
                 continue
             # Check if the order is completed
-            for tx in crypto_txs:
-                if tx["sent"] == 0:
-                    try:
-                        if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            logger.debug(
-                                f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo']['order_id']}")
-                            if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
-                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                if tx["memo"]["status"] == "COMPLETED":
-                                    if trader.type == StrategyType.DCA:
-                                        # The order is created after the last update
-                                        trader.profit = 0
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.volume = 0
-                                        trader.buy_count = 0
-                                        trader.last_buy_price = 0
-                                        trader.total_cost = 0
-                                        trader.avg_price = 0
-                                        trader.current_price = 0
+            # For EVM, sell orders receive USDC (ERC20), so check USDC transactions instead of native token
+            if CONFIG["BLOCKCHAIN"] == "EVM":
+                # Check USDC transactions for completion
+                usdc_address = CONFIG["USDC_ADDRESS"].lower()
+                if usdc_address in all_token_txs:
+                    for tx in all_token_txs[usdc_address]:
+                        if tx["sent"] == 0:
+                            try:
+                                if tx["memo"] and "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
+                                    logger.debug(
+                                        f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo'].get('order_id', 'N/A')}")
+                                    if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                            trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                                        if tx["memo"]["status"] == "COMPLETED":
+                                            if trader.type == StrategyType.DCA:
+                                                # The order is created after the last update
+                                                trader.profit = 0
+                                                trader.position_status = PositionStatus.TRADABLE.name
+                                                trader.volume = 0
+                                                trader.buy_count = 0
+                                                trader.last_buy_price = 0
+                                                trader.total_cost = 0
+                                                trader.avg_price = 0
+                                                trader.current_price = 0
 
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        logger.info(f"Sell {trader.stock} confirmed")
-                                        break
-                                    if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
-                                        # The order is created after the last update
-                                        if CONFIG["BLOCKCHAIN"] == "SOLANA":
-                                            divisor = SOL_LAMPORTS
-                                        elif CONFIG["BLOCKCHAIN"] == "EVM":
-                                            divisor = 10**18  # Native token has 18 decimals
-                                        else:
-                                            divisor = XCH_MOJO
-                                        trader.profit += tx["amount"]/divisor - trader.total_cost
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.volume = 0
-                                        trader.buy_count = trader.buy_count+1
-                                        trader.last_buy_price = 0
-                                        trader.total_cost = 0
-                                        trader.avg_price = 0
-                                        trader.current_price = 0
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        logger.info(f"Sell {trader.stock} confirmed")
-                                        break
-                    except Exception as e:
-                        logger.error(f"Failed to confirm {trader.stock}: {e}")
-                        continue
+                                                trader.last_updated = datetime.now()
+                                                update_position(trader)
+                                                logger.info(f"Sell {trader.stock} confirmed")
+                                                break
+                                            if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
+                                                # The order is created after the last update
+                                                usdc_decimals = CONFIG["USDC_DECIMALS"]
+                                                divisor = 10**usdc_decimals
+                                                trader.profit += tx["amount"]/divisor - trader.total_cost
+                                                trader.position_status = PositionStatus.TRADABLE.name
+                                                trader.volume = 0
+                                                trader.buy_count = trader.buy_count+1
+                                                trader.last_buy_price = 0
+                                                trader.total_cost = 0
+                                                trader.avg_price = 0
+                                                trader.current_price = 0
+                                                trader.last_updated = datetime.now()
+                                                update_position(trader)
+                                                logger.info(f"Sell {trader.stock} confirmed")
+                                                break
+                            except Exception as e:
+                                logger.error(f"Failed to confirm {trader.stock}: {e}")
+                                continue
+            else:
+                # For non-EVM chains, check native token transactions
+                for tx in crypto_txs:
+                    if tx["sent"] == 0:
+                        try:
+                            if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
+                                logger.debug(
+                                    f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo']['order_id']}")
+                                if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                                    if tx["memo"]["status"] == "COMPLETED":
+                                        if trader.type == StrategyType.DCA:
+                                            # The order is created after the last update
+                                            trader.profit = 0
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            trader.volume = 0
+                                            trader.buy_count = 0
+                                            trader.last_buy_price = 0
+                                            trader.total_cost = 0
+                                            trader.avg_price = 0
+                                            trader.current_price = 0
+
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            logger.info(f"Sell {trader.stock} confirmed")
+                                            break
+                                        if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
+                                            # The order is created after the last update
+                                            if CONFIG["BLOCKCHAIN"] == "SOLANA":
+                                                divisor = SOL_LAMPORTS
+                                            else:
+                                                divisor = XCH_MOJO
+                                            trader.profit += tx["amount"]/divisor - trader.total_cost
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            trader.volume = 0
+                                            trader.buy_count = trader.buy_count+1
+                                            trader.last_buy_price = 0
+                                            trader.total_cost = 0
+                                            trader.avg_price = 0
+                                            trader.current_price = 0
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            logger.info(f"Sell {trader.stock} confirmed")
+                                            break
+                        except Exception as e:
+                            logger.error(f"Failed to confirm {trader.stock}: {e}")
+                            continue
     return False
 
 
