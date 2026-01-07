@@ -1049,7 +1049,12 @@ def send_usdc(address: str, order, token_address: str, logger):
         
         # Standard ERC20 transfer - memo cannot be included in transfer data
         # The memo will need to be tracked separately or included in an event
-        transfer_data = usdc_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
+        # Use encode_abi for web3.py v7+, fallback to encodeABI for older versions
+        try:
+            transfer_data = usdc_contract.encode_abi(abi_element_identifier='transfer', args=[recipient_address, offer_amount])
+        except AttributeError:
+            # Fallback for older web3.py versions
+            transfer_data = usdc_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
         
         transaction = {
             'to': usdc_address,
@@ -1062,7 +1067,9 @@ def send_usdc(address: str, order, token_address: str, logger):
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
-        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        # Handle both web3.py v6 and v7+ attribute names
+        raw_tx = getattr(signed_txn, 'raw_transaction', None) or getattr(signed_txn, 'rawTransaction', None)
+        tx_hash = w3.eth.send_raw_transaction(raw_tx)
         
         # Wait for transaction receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
@@ -1118,7 +1125,12 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         gas_price = w3.eth.gas_price
         
         # Standard ERC20 transfer
-        transfer_data = token_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
+        # Use encode_abi for web3.py v7+, fallback to encodeABI for older versions
+        try:
+            transfer_data = token_contract.encode_abi(abi_element_identifier='transfer', args=[recipient_address, offer_amount])
+        except AttributeError:
+            # Fallback for older web3.py versions
+            transfer_data = token_contract.encodeABI(fn_name='transfer', args=[recipient_address, offer_amount])
         
         transaction = {
             'to': token_address,
@@ -1131,7 +1143,9 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
-        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        # Handle both web3.py v6 and v7+ attribute names
+        raw_tx = getattr(signed_txn, 'raw_transaction', None) or getattr(signed_txn, 'rawTransaction', None)
+        tx_hash = w3.eth.send_raw_transaction(raw_tx)
         
         # Wait for transaction receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
@@ -1197,7 +1211,9 @@ def send_native_token(address: str, order, logger):
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
-        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        # Handle both web3.py v6 and v7+ attribute names
+        raw_tx = getattr(signed_txn, 'raw_transaction', None) or getattr(signed_txn, 'rawTransaction', None)
+        tx_hash = w3.eth.send_raw_transaction(raw_tx)
         
         # Wait for transaction receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
