@@ -1671,19 +1671,40 @@ def get_erc20_token_txs(logger):
                     
                     logger.debug(f"Processing transfer: token={token_address}, hash={tx_hash}, from={from_addr}, to={to_addr}, is_sent={is_sent}")
                     
-                    # Get amount (already in wei/smallest unit)
-                    amount_str = transfer.get("value", "0")
+                    # Get amount from rawContract.value (hex string in smallest unit)
+                    # Alchemy returns 'value' as already converted float, but we need the raw amount
+                    raw_contract = transfer.get("rawContract", {})
+                    amount_hex = raw_contract.get("value", "0x0")
+                    
                     try:
-                        amount = int(float(amount_str))
-                    except (ValueError, TypeError):
-                        logger.debug(f"Skipping transfer with invalid amount: {amount_str}")
+                        # Convert hex string to integer (wei/smallest unit)
+                        if isinstance(amount_hex, str):
+                            if amount_hex.startswith("0x"):
+                                amount = int(amount_hex, 16)
+                            else:
+                                amount = int(amount_hex)
+                        else:
+                            # Fallback: try to use the 'value' field
+                            value_field = transfer.get("value", 0)
+                            if isinstance(value_field, (int, float)):
+                                # Get decimals from rawContract
+                                decimals_hex = raw_contract.get("decimal", "0x12")  # Default to 18
+                                decimals = int(decimals_hex, 16) if isinstance(decimals_hex, str) and decimals_hex.startswith("0x") else 18
+                                # Convert back to smallest unit
+                                amount = int(value_field * (10 ** decimals))
+                            else:
+                                amount = int(float(value_field))
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"Skipping transfer with invalid amount: {amount_hex}, error: {e}")
                         skipped_count += 1
                         continue
                     
                     if amount <= 0:
-                        logger.debug(f"Skipping transfer with zero amount")
+                        logger.debug(f"Skipping transfer with zero amount: raw={amount_hex}, converted={amount}")
                         skipped_count += 1
                         continue
+                    
+                    logger.debug(f"Amount extracted: raw={amount_hex}, converted={amount}")
                     
                     # Get block number and timestamp
                     block_number = transfer.get("blockNum", "0x0")
