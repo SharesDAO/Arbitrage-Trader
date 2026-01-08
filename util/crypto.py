@@ -688,15 +688,17 @@ def get_crypto_balance():
             print(f"Cannot get SOL balance: {str(e)}")
             return 0
     elif CONFIG["BLOCKCHAIN"] == "EVM":
-        # Get native token balance (ETH/BNB) for EVM chain
+        # Get USDC balance for EVM chain
         try:
             w3 = get_web3()
             address = Web3.to_checksum_address(CONFIG["ADDRESS"])
-            balance_wei = w3.eth.get_balance(address)
-            # Convert from wei to native token (18 decimals)
-            return balance_wei / 10**18
+            usdc_address = Web3.to_checksum_address(CONFIG["USDC_ADDRESS"])
+            usdc_contract = w3.eth.contract(address=usdc_address, abi=get_erc20_abi())
+            usdc_balance = usdc_contract.functions.balanceOf(address).call()
+            usdc_decimals = CONFIG["USDC_DECIMALS"]
+            return usdc_balance / (10 ** usdc_decimals)
         except Exception as e:
-            print(f"Cannot get EVM native token balance: {str(e)}")
+            print(f"Cannot get USDC balance: {str(e)}")
             return 0
     else:
         wallet_name = "Chia Wallet"
