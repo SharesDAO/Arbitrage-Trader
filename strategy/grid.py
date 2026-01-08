@@ -167,7 +167,7 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["volume"] += trader.volume
             stocks_stats[trader.ticker]["value"] += trader.volume * (current_sell_price+current_buy_price) /2
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
-            if trader.position_status == PositionStatus.TRADABLE.name and is_market_open(logger):
+            if trader.position_status == PositionStatus.TRADABLE.name:
                 if trader.max_price / CONFIG["CRYPTO_MIN"] - trader.index * trader.grid_width >= current_sell_price / crypto_price and trader.volume == 0:
                     trader.buy_stock(trader.invested_crypto / trader.grid_num, crypto_price, current_sell_price)
                 elif trader.max_price / CONFIG["CRYPTO_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / crypto_price and trader.volume > 0 and current_buy_price / crypto_price > trader.avg_price:

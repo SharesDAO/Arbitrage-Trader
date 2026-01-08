@@ -1119,6 +1119,10 @@ def send_usdc(address: str, order, token_address: str, logger):
         # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
         transaction.update(gas_params)
         
+        # Ensure EIP-1559 transactions don't have gasPrice (remove if present)
+        if 'type' in transaction and transaction['type'] == 2:
+            transaction.pop('gasPrice', None)  # Remove gasPrice for EIP-1559 transactions
+        
         # Estimate gas dynamically for token transfer with memo
         try:
             estimated_gas = w3.eth.estimate_gas(transaction)
@@ -1234,6 +1238,10 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
         transaction.update(gas_params)
         
+        # Ensure EIP-1559 transactions don't have gasPrice (remove if present)
+        if 'type' in transaction and transaction['type'] == 2:
+            transaction.pop('gasPrice', None)  # Remove gasPrice for EIP-1559 transactions
+        
         # Estimate gas dynamically for token transfer with memo
         try:
             estimated_gas = w3.eth.estimate_gas(transaction)
@@ -1325,6 +1333,10 @@ def send_native_token(address: str, order, logger):
         }
         # Add gas parameters (either legacy gasPrice or EIP-1559 maxFeePerGas/maxPriorityFeePerGas)
         transaction.update(gas_params)
+        
+        # Ensure EIP-1559 transactions don't have gasPrice (remove if present)
+        if 'type' in transaction and transaction['type'] == 2:
+            transaction.pop('gasPrice', None)  # Remove gasPrice for EIP-1559 transactions
         
         # Sign and send transaction
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
