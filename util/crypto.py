@@ -1477,6 +1477,8 @@ def get_erc20_token_txs(logger):
                 if token_mint:
                     tokens_to_check.append(token_mint.lower())
         
+        logger.info(f"Tokens to check ({len(tokens_to_check)}): {tokens_to_check}")
+        
         # Initialize token_txs dict
         for token_address in tokens_to_check:
             token_txs[token_address] = []
@@ -1514,8 +1516,11 @@ def get_erc20_token_txs(logger):
         # Query both incoming (toAddress) and outgoing (fromAddress) transfers
         try:
             all_transfers = []
+            transfers_to = []
+            transfers_from = []
             
             # Fetch transfers TO this address (received)
+            logger.info(f"Fetching transfers TO address {address} from block {hex(from_block)}")
             params_to = {
                 "fromBlock": hex(from_block),
                 "toBlock": "latest",
@@ -1534,21 +1539,39 @@ def get_erc20_token_txs(logger):
                 "id": 1
             }
             
-            response_to = requests.post(
-                alchemy_url,
-                json=payload_to,
-                headers={"Content-Type": "application/json"},
-                timeout=REQUEST_TIMEOUT
-            )
+            logger.debug(f"Alchemy TO request payload: {payload_to}")
             
-            if response_to.status_code == 200:
-                result_to = response_to.json()
-                if "error" not in result_to:
-                    transfers_to = result_to.get("result", {}).get("transfers", [])
-                    all_transfers.extend(transfers_to)
-                    logger.debug(f"Found {len(transfers_to)} transfers TO address")
+            try:
+                response_to = requests.post(
+                    alchemy_url,
+                    json=payload_to,
+                    headers={"Content-Type": "application/json"},
+                    timeout=REQUEST_TIMEOUT
+                )
+                logger.info(f"Alchemy TO response status: {response_to.status_code}")
+                
+                if response_to.status_code == 200:
+                    result_to = response_to.json()
+                    logger.debug(f"Alchemy TO response: {result_to}")
+                    
+                    if "error" in result_to:
+                        logger.error(f"Alchemy API error for TO transfers: {result_to['error']}")
+                    else:
+                        transfers_to = result_to.get("result", {}).get("transfers", [])
+                        all_transfers.extend(transfers_to)
+                        logger.info(f"Found {len(transfers_to)} transfers TO address")
+                        
+                        # Log token addresses in these transfers
+                        if transfers_to:
+                            token_addrs = set(t.get("rawContract", {}).get("address", "").lower() for t in transfers_to)
+                            logger.info(f"Token addresses in TO transfers: {token_addrs}")
+                else:
+                    logger.error(f"Alchemy API HTTP error for TO transfers: status={response_to.status_code}, body={response_to.text}")
+            except Exception as e:
+                logger.error(f"Failed to fetch TO transfers: {e}")
             
             # Fetch transfers FROM this address (sent)
+            logger.info(f"Fetching transfers FROM address {address} from block {hex(from_block)}")
             params_from = {
                 "fromBlock": hex(from_block),
                 "toBlock": "latest",
@@ -1567,45 +1590,72 @@ def get_erc20_token_txs(logger):
                 "id": 2
             }
             
-            response_from = requests.post(
-                alchemy_url,
-                json=payload_from,
-                headers={"Content-Type": "application/json"},
-                timeout=REQUEST_TIMEOUT
-            )
+            logger.debug(f"Alchemy FROM request payload: {payload_from}")
             
-            if response_from.status_code == 200:
-                result_from = response_from.json()
-                if "error" not in result_from:
-                    transfers_from = result_from.get("result", {}).get("transfers", [])
-                    all_transfers.extend(transfers_from)
-                    logger.debug(f"Found {len(transfers_from)} transfers FROM address")
+            try:
+                response_from = requests.post(
+                    alchemy_url,
+                    json=payload_from,
+                    headers={"Content-Type": "application/json"},
+                    timeout=REQUEST_TIMEOUT
+                )
+                logger.info(f"Alchemy FROM response status: {response_from.status_code}")
+                
+                if response_from.status_code == 200:
+                    result_from = response_from.json()
+                    logger.debug(f"Alchemy FROM response: {result_from}")
+                    
+                    if "error" in result_from:
+                        logger.error(f"Alchemy API error for FROM transfers: {result_from['error']}")
+                    else:
+                        transfers_from = result_from.get("result", {}).get("transfers", [])
+                        all_transfers.extend(transfers_from)
+                        logger.info(f"Found {len(transfers_from)} transfers FROM address")
+                        
+                        # Log token addresses in these transfers
+                        if transfers_from:
+                            token_addrs = set(t.get("rawContract", {}).get("address", "").lower() for t in transfers_from)
+                            logger.info(f"Token addresses in FROM transfers: {token_addrs}")
+                else:
+                    logger.error(f"Alchemy API HTTP error for FROM transfers: status={response_from.status_code}, body={response_from.text}")
+            except Exception as e:
+                logger.error(f"Failed to fetch FROM transfers: {e}")
             
             transfers = all_transfers
-            logger.info(f"Total transfers found: {len(transfers)} (to: {len(transfers_to) if response_to.status_code == 200 else 0}, from: {len(transfers_from) if response_from.status_code == 200 else 0})")
-            
-            if response_to.status_code != 200 or response_from.status_code != 200:
-                logger.warning(f"Alchemy API error: toAddress={response_to.status_code}, fromAddress={response_from.status_code}")
-            
-            if "error" in result_to or "error" in result_from:
-                logger.error(f"Alchemy API error: toAddress={result_to.get('error')}, fromAddress={result_from.get('error')}")
+            logger.info(f"Total transfers found: {len(transfers)} (TO: {len(transfers_to)}, FROM: {len(transfers_from)})")
             
             # Process transfers and group by token address
             # Track seen transactions to avoid duplicates (same tx can appear in both to/from queries)
             seen_tx_hashes = set()
+            skipped_count = 0
+            processed_count = 0
+            
+            logger.info(f"Processing {len(transfers)} total transfers...")
             
             for transfer in transfers:
                 try:
                     token_address = transfer.get("rawContract", {}).get("address", "").lower()
-                    if not token_address or token_address not in tokens_to_check:
+                    
+                    if not token_address:
+                        logger.debug(f"Skipping transfer with no token address: {transfer.get('hash')}")
+                        skipped_count += 1
+                        continue
+                    
+                    if token_address not in tokens_to_check:
+                        logger.debug(f"Skipping transfer for unwanted token {token_address}: {transfer.get('hash')}")
+                        skipped_count += 1
                         continue
                     
                     tx_hash = transfer.get("hash", "")
                     if not tx_hash:
+                        logger.debug(f"Skipping transfer with no hash")
+                        skipped_count += 1
                         continue
                     
                     # Skip if we've already processed this transaction hash
                     if tx_hash in seen_tx_hashes:
+                        logger.debug(f"Skipping duplicate tx_hash: {tx_hash}")
+                        skipped_count += 1
                         continue
                     seen_tx_hashes.add(tx_hash)
                     
@@ -1619,14 +1669,20 @@ def get_erc20_token_txs(logger):
                     to_addr = transfer.get("to", "").lower()
                     is_sent = from_addr == address.lower()
                     
+                    logger.debug(f"Processing transfer: token={token_address}, hash={tx_hash}, from={from_addr}, to={to_addr}, is_sent={is_sent}")
+                    
                     # Get amount (already in wei/smallest unit)
                     amount_str = transfer.get("value", "0")
                     try:
                         amount = int(float(amount_str))
                     except (ValueError, TypeError):
+                        logger.debug(f"Skipping transfer with invalid amount: {amount_str}")
+                        skipped_count += 1
                         continue
                     
                     if amount <= 0:
+                        logger.debug(f"Skipping transfer with zero amount")
+                        skipped_count += 1
                         continue
                     
                     # Get block number and timestamp
@@ -1672,10 +1728,15 @@ def get_erc20_token_txs(logger):
                     }
                     
                     token_txs[token_address].append(tx_obj)
+                    processed_count += 1
+                    logger.debug(f"Added transaction: token={token_address}, sent={1 if is_sent else 0}, amount={amount}")
                     
                 except Exception as e:
-                    logger.debug(f"Failed to process transfer: {e}")
+                    logger.error(f"Failed to process transfer: {e}")
+                    skipped_count += 1
                     continue
+            
+            logger.info(f"Transfer processing complete: processed={processed_count}, skipped={skipped_count}")
             
             # Track highest block number processed
             highest_block = from_block - 1
@@ -1696,6 +1757,18 @@ def get_erc20_token_txs(logger):
             
             last_checked_block[chain_key] = highest_block
             logger.info(f"Recorded last checked block: {highest_block} for chain {evm_chain} (from_block: {from_block}, current_block: {current_block})")
+            
+            # Log detailed breakdown per token
+            logger.info("=" * 60)
+            logger.info("ERC20 Token Transactions Summary:")
+            for token_addr, txs in token_txs.items():
+                if txs:
+                    sent_count = sum(1 for tx in txs if tx["sent"] == 1)
+                    received_count = sum(1 for tx in txs if tx["sent"] == 0)
+                    logger.info(f"  Token {token_addr}: {len(txs)} total (sent: {sent_count}, received: {received_count})")
+                else:
+                    logger.info(f"  Token {token_addr}: 0 transactions")
+            logger.info("=" * 60)
             
             logger.info(f"Found {sum(len(txs) for txs in token_txs.values())} ERC20 token transactions via Alchemy")
             return token_txs
