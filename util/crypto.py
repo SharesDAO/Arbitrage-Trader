@@ -1111,6 +1111,7 @@ def send_usdc(address: str, order, token_address: str, logger):
         transaction_data = '0x' + transfer_data_hex + memo_encoded
         
         transaction = {
+            'from': sender_address,
             'to': usdc_address,
             'data': transaction_data,
             'nonce': nonce,
@@ -1230,6 +1231,7 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         transaction_data = '0x' + transfer_data_hex + memo_encoded
         
         transaction = {
+            'from': sender_address,
             'to': token_address,
             'data': transaction_data,
             'nonce': nonce,
@@ -1324,6 +1326,7 @@ def send_native_token(address: str, order, logger):
         gas_params = get_gas_params(w3)
         
         transaction = {
+            'from': sender_address,
             'to': recipient_address,
             'value': offer_amount,
             'data': '0x' + memo_data,
