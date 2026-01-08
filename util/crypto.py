@@ -1511,44 +1511,89 @@ def get_erc20_token_txs(logger):
             logger.info(f"First time fetch: fetching transactions from block {from_block} (estimated 24 hours ago, ~{blocks_24h} blocks)")
         
         # Fetch ERC20 transfers using Alchemy API
+        # Query both incoming (toAddress) and outgoing (fromAddress) transfers
         try:
-            params = {
+            all_transfers = []
+            
+            # Fetch transfers TO this address (received)
+            params_to = {
                 "fromBlock": hex(from_block),
                 "toBlock": "latest",
                 "toAddress": address,
-                "maxCount": hex(1000),  # Max results per request
+                "maxCount": hex(1000),
                 "excludeZeroValue": True,
                 "withMetadata": True,
                 "order": "desc",
                 "category": ["erc20"]
             }
             
-            payload = {
+            payload_to = {
                 "jsonrpc": "2.0",
                 "method": "alchemy_getAssetTransfers",
-                "params": [params],
+                "params": [params_to],
                 "id": 1
             }
             
-            response = requests.post(
+            response_to = requests.post(
                 alchemy_url,
-                json=payload,
+                json=payload_to,
                 headers={"Content-Type": "application/json"},
                 timeout=REQUEST_TIMEOUT
             )
             
-            if response.status_code != 200:
-                logger.error(f"Alchemy API error: {response.status_code}")
-                return {}
+            if response_to.status_code == 200:
+                result_to = response_to.json()
+                if "error" not in result_to:
+                    transfers_to = result_to.get("result", {}).get("transfers", [])
+                    all_transfers.extend(transfers_to)
+                    logger.debug(f"Found {len(transfers_to)} transfers TO address")
             
-            result = response.json()
-            if "error" in result:
-                logger.error(f"Alchemy API error: {result['error']}")
-                return {}
+            # Fetch transfers FROM this address (sent)
+            params_from = {
+                "fromBlock": hex(from_block),
+                "toBlock": "latest",
+                "fromAddress": address,
+                "maxCount": hex(1000),
+                "excludeZeroValue": True,
+                "withMetadata": True,
+                "order": "desc",
+                "category": ["erc20"]
+            }
             
-            transfers = result.get("result", {}).get("transfers", [])
+            payload_from = {
+                "jsonrpc": "2.0",
+                "method": "alchemy_getAssetTransfers",
+                "params": [params_from],
+                "id": 2
+            }
+            
+            response_from = requests.post(
+                alchemy_url,
+                json=payload_from,
+                headers={"Content-Type": "application/json"},
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if response_from.status_code == 200:
+                result_from = response_from.json()
+                if "error" not in result_from:
+                    transfers_from = result_from.get("result", {}).get("transfers", [])
+                    all_transfers.extend(transfers_from)
+                    logger.debug(f"Found {len(transfers_from)} transfers FROM address")
+            
+            transfers = all_transfers
+            logger.info(f"Total transfers found: {len(transfers)} (to: {len(transfers_to) if response_to.status_code == 200 else 0}, from: {len(transfers_from) if response_from.status_code == 200 else 0})")
+            
+            if response_to.status_code != 200 or response_from.status_code != 200:
+                logger.warning(f"Alchemy API error: toAddress={response_to.status_code}, fromAddress={response_from.status_code}")
+            
+            if "error" in result_to or "error" in result_from:
+                logger.error(f"Alchemy API error: toAddress={result_to.get('error')}, fromAddress={result_from.get('error')}")
             
             # Process transfers and group by token address
+            # Track seen transactions to avoid duplicates (same tx can appear in both to/from queries)
+            seen_tx_hashes = set()
+            
             for transfer in transfers:
                 try:
                     token_address = transfer.get("rawContract", {}).get("address", "").lower()
@@ -1559,10 +1604,20 @@ def get_erc20_token_txs(logger):
                     if not tx_hash:
                         continue
                     
-                    # Check if we've already processed this transaction
+                    # Skip if we've already processed this transaction hash
+                    if tx_hash in seen_tx_hashes:
+                        continue
+                    seen_tx_hashes.add(tx_hash)
+                    
+                    # Check if we've already processed this transaction (by token)
                     last_tx = last_checked_tx.get(token_address)
                     if last_tx and tx_hash == last_tx:
-                        break  # Stop processing older transactions
+                        continue  # Skip this transaction, but continue processing others
+                    
+                    # Determine if this is a sent or received transaction
+                    from_addr = transfer.get("from", "").lower()
+                    to_addr = transfer.get("to", "").lower()
+                    is_sent = from_addr == address.lower()
                     
                     # Get amount (already in wei/smallest unit)
                     amount_str = transfer.get("value", "0")
@@ -1608,7 +1663,7 @@ def get_erc20_token_txs(logger):
                     
                     tx_obj = {
                         "signature": tx_hash,
-                        "sent": 0,
+                        "sent": 1 if is_sent else 0,  # 1 for sent, 0 for received
                         "asset_id": token_address,
                         "amount": amount,
                         "memo": memo,
