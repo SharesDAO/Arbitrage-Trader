@@ -14,7 +14,7 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 
 from util.bech32m import encode_puzzle_hash
-from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
+from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType, ALCHEMY_URLS, BLOCKS_PER_24H
 from util.db import update_position, get_last_trade, delete_trade
 from util.stock import STOCKS
 from solana.rpc.api import Client
@@ -34,6 +34,7 @@ price_cache = TTLCache(maxsize=100, ttl=30)
 tx_cache = TTLCache(maxsize=1000, ttl=300)  # Increased cache size for block timestamps
 token_cache = TTLCache(maxsize=10, ttl=10)
 last_checked_tx = {}
+last_checked_block = {}  # Store last checked block height per chain
 block_timestamp_cache = {}  # Cache for block timestamps to avoid repeated RPC calls
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
@@ -1458,85 +1459,143 @@ def get_evm_txs(logger):
 
 
 def get_erc20_token_txs(logger):
-    """Get ERC20 token (USDC and stock tokens) transactions for EVM chain"""
+    """Get ERC20 token (USDC and stock tokens) transactions for EVM chain using Alchemy API"""
+    global last_checked_block
+    
     try:
         w3 = get_web3()
         address = Web3.to_checksum_address(CONFIG["ADDRESS"])
         usdc_address = Web3.to_checksum_address(CONFIG["USDC_ADDRESS"])
         token_txs = {}
         
-        # Get transactions for USDC and stock tokens
-        tokens_to_check = [usdc_address]
+        # Get list of tokens to check
+        tokens_to_check = [usdc_address.lower()]
         for stock in CONFIG.get("TRADING_SYMBOLS", []):
             ticker = stock if isinstance(stock, str) else stock.get("TICKER")
             if ticker and ticker in STOCKS:
                 token_mint = STOCKS[ticker]["asset_id"]
                 if token_mint:
-                    tokens_to_check.append(Web3.to_checksum_address(token_mint))
+                    tokens_to_check.append(token_mint.lower())
         
-        current_block = w3.eth.block_number
-        # Reduce block range for better performance (1000 blocks instead of 10000)
-        # This covers approximately 2-3 hours of transactions on most EVM chains
-        from_block = max(0, current_block - 1000)
-        
-        # Create filter for Transfer events
+        # Initialize token_txs dict
         for token_address in tokens_to_check:
-            token_txs[token_address.lower()] = []
-            last_tx = last_checked_tx.get(token_address.lower())
+            token_txs[token_address] = []
+        
+        # Get Alchemy API key and URL
+        alchemy_api_key = os.environ.get("ALCHEMY_API_KEY")
+        if not alchemy_api_key:
+            logger.error("ALCHEMY_API_KEY not found")
+            return {}
+        
+        # Build Alchemy URL based on chain
+        evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+        base_url = ALCHEMY_URLS.get(evm_chain)
+        if not base_url:
+            logger.error(f"Alchemy not supported for chain {evm_chain}")
+            return {}
+        
+        alchemy_url = f"{base_url}/{alchemy_api_key}"
+        
+        # Determine starting block: use last checked block if exists, otherwise estimate 24 hours ago
+        current_block = w3.eth.block_number
+        chain_key = f"{evm_chain}_{address.lower()}"
+        
+        if chain_key in last_checked_block:
+            # Use last checked block + 1 to avoid duplicates
+            from_block = last_checked_block[chain_key] + 1
+            logger.info(f"Fetching transactions from block {from_block} (last checked: {last_checked_block[chain_key]})")
+        else:
+            # First time: estimate block height 24 hours ago based on average block time
+            blocks_24h = BLOCKS_PER_24H.get(evm_chain, 7200)  # Default to Ethereum if unknown
+            from_block = max(0, current_block - blocks_24h)
+            logger.info(f"First time fetch: fetching transactions from block {from_block} (estimated 24 hours ago, ~{blocks_24h} blocks)")
+        
+        # Fetch ERC20 transfers using Alchemy API
+        try:
+            params = {
+                "fromBlock": hex(from_block),
+                "toBlock": "latest",
+                "toAddress": address,
+                "maxCount": hex(1000),  # Max results per request
+                "excludeZeroValue": True,
+                "withMetadata": True,
+                "order": "desc",
+                "category": ["erc20"]
+            }
             
-            # Create filter for Transfer events to this address
-            try:
-                transfer_filter = w3.eth.filter({
-                    "fromBlock": from_block,
-                    "toBlock": "latest",
-                    "address": token_address,
-                    "topics": [
-                        ERC20_TRANSFER_EVENT_SIGNATURE,
-                        None,  # from
-                        "0x" + "0" * 24 + address[2:].lower()  # to (this address)
-                    ]
-                })
-                
-                events = transfer_filter.get_all_entries()
-            except Exception as e:
-                logger.warning(f"Failed to create filter for {token_address}: {e}")
-                continue
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "alchemy_getAssetTransfers",
+                "params": [params],
+                "id": 1
+            }
             
-            # Stop early if we found the last checked transaction
-            found_last_tx = False
-            events_to_process = []
+            response = requests.post(
+                alchemy_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=REQUEST_TIMEOUT
+            )
             
-            # First pass: collect events until we find last_tx
-            for event in events:
-                if last_tx and event['transactionHash'].hex() == last_tx:
-                    found_last_tx = True
-                    break
-                events_to_process.append(event)
+            if response.status_code != 200:
+                logger.error(f"Alchemy API error: {response.status_code}")
+                return {}
             
-            # Process events in reverse order (newest first) and stop after processing a reasonable number
-            # Limit to last 50 events for performance
-            events_to_process = events_to_process[:50]
+            result = response.json()
+            if "error" in result:
+                logger.error(f"Alchemy API error: {result['error']}")
+                return {}
             
-            # Batch process events
-            for event in reversed(events_to_process):
-                tx_hash = event['transactionHash']
+            transfers = result.get("result", {}).get("transfers", [])
+            
+            # Process transfers and group by token address
+            for transfer in transfers:
                 try:
-                    # Get receipt (faster than full transaction)
-                    tx_receipt = w3.eth.get_transaction_receipt(tx_hash)
+                    token_address = transfer.get("rawContract", {}).get("address", "").lower()
+                    if not token_address or token_address not in tokens_to_check:
+                        continue
                     
-                    # Get block info only once per block (cache block timestamps)
-                    block_number = tx_receipt.blockNumber
+                    tx_hash = transfer.get("hash", "")
+                    if not tx_hash:
+                        continue
+                    
+                    # Check if we've already processed this transaction
+                    last_tx = last_checked_tx.get(token_address)
+                    if last_tx and tx_hash == last_tx:
+                        break  # Stop processing older transactions
+                    
+                    # Get amount (already in wei/smallest unit)
+                    amount_str = transfer.get("value", "0")
+                    try:
+                        amount = int(float(amount_str))
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    if amount <= 0:
+                        continue
+                    
+                    # Get block number and timestamp
+                    block_number = transfer.get("blockNum", "0x0")
+                    try:
+                        if isinstance(block_number, str) and block_number.startswith("0x"):
+                            block_number = int(block_number, 16)
+                        else:
+                            block_number = int(block_number)
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    # Get timestamp from metadata or cache
                     block_cache_key = f"block_{block_number}"
                     if block_cache_key not in tx_cache:
                         try:
                             block = w3.eth.get_block(block_number, full_transactions=False)
-                            tx_cache[block_cache_key] = block.timestamp
+                            block_timestamp = block.timestamp
+                            tx_cache[block_cache_key] = block_timestamp
                         except:
-                            tx_cache[block_cache_key] = int(time.time())
-                    block_timestamp = tx_cache[block_cache_key]
-                    
-                    # Decode Transfer event
-                    amount = int(event['data'].hex(), 16)
+                            block_timestamp = int(time.time())
+                            tx_cache[block_cache_key] = block_timestamp
+                    else:
+                        block_timestamp = tx_cache[block_cache_key]
                     
                     # Try to decode memo from transaction data
                     memo = None
@@ -1545,33 +1604,51 @@ def get_erc20_token_txs(logger):
                         if tx_obj_full and tx_obj_full.input:
                             memo = decode_memo_from_erc20_data(tx_obj_full.input.hex())
                     except Exception as e:
-                        logger.debug(f"Failed to decode memo from transaction {tx_hash.hex()}: {e}")
+                        logger.debug(f"Failed to decode memo from transaction {tx_hash}: {e}")
                     
                     tx_obj = {
-                        "signature": tx_hash.hex(),
+                        "signature": tx_hash,
                         "sent": 0,
-                        "asset_id": token_address.lower(),
+                        "asset_id": token_address,
                         "amount": amount,
                         "memo": memo,
                         "timestamp": block_timestamp,
                         "block_number": block_number
                     }
                     
-                    # Add transaction if amount > 0
-                    if tx_obj["amount"] > 0:
-                        token_txs[token_address.lower()].append(tx_obj)
+                    token_txs[token_address].append(tx_obj)
+                    
                 except Exception as e:
-                    logger.debug(f"Failed to process event {event.get('transactionHash', 'unknown')}: {e}")
+                    logger.debug(f"Failed to process transfer: {e}")
                     continue
             
-            if token_txs[token_address.lower()]:
-                last_checked_tx[token_address.lower()] = token_txs[token_address.lower()][0]["signature"]
-            elif found_last_tx:
-                # If we found last_tx but no new transactions, keep the last_tx marker
-                pass
-        
-        logger.info(f"Found {sum(len(txs) for txs in token_txs.values())} ERC20 token transactions")
-        return token_txs
+            # Track highest block number processed
+            highest_block = from_block - 1
+            
+            # Update last_checked_tx for each token and track highest block
+            for token_address in tokens_to_check:
+                if token_txs[token_address]:
+                    # Sort by block number descending (newest first)
+                    token_txs[token_address].sort(key=lambda x: x.get("block_number", 0), reverse=True)
+                    last_checked_tx[token_address] = token_txs[token_address][0]["signature"]
+                    # Update highest block
+                    highest_block = max(highest_block, token_txs[token_address][0].get("block_number", from_block - 1))
+            
+            # Record the highest block processed for next call
+            # If no transactions found, use current_block as the last checked block
+            if highest_block < from_block:
+                highest_block = current_block
+            
+            last_checked_block[chain_key] = highest_block
+            logger.info(f"Recorded last checked block: {highest_block} for chain {evm_chain} (from_block: {from_block}, current_block: {current_block})")
+            
+            logger.info(f"Found {sum(len(txs) for txs in token_txs.values())} ERC20 token transactions via Alchemy")
+            return token_txs
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch transactions via Alchemy: {e}")
+            return {}
+            
     except Exception as e:
         logger.error(f"Failed to get ERC20 token transactions: {str(e)}")
         return {}

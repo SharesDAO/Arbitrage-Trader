@@ -63,6 +63,7 @@ class GridStockTrader(StockTrader):
         self.last_updated = timestamp
         record_trade(self.stock, "BUY", buy_price * crypto_price, volume, crypto_volume, 0)
         self.logger.info(f"Buying {volume} shares of {self.stock} at {buy_price} {CONFIG['CURRENCY']}")
+        time.sleep(3)
 
     def sell_stock(self, crypto_price, stock_price, liquid=False):
         self.current_price = stock_price
@@ -87,6 +88,7 @@ class GridStockTrader(StockTrader):
             f"Selling {self.volume} shares of {self.stock} at {sell_price} {CONFIG['CURRENCY']} with {request_crypto - self.total_cost} {CONFIG['CURRENCY']} profit")
         self.position_status = PositionStatus.PENDING_SELL.name
         self.last_updated = timestamp
+        time.sleep(3)
 
     def adjust_volume(self, total_volume):
         # Get current stock balance
@@ -179,7 +181,7 @@ def execute_grid(logger):
                     stocks_stats[trader.ticker]["selling"] += 1
             stock_balance += trader.volume * trader.current_price
             update_position(trader)
-            time.sleep(3)
+            
 
         # Get crypto balance
         crypto_balance = get_crypto_balance()

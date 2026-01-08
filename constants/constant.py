@@ -60,3 +60,20 @@ EVM_CHAINS = {
         "rpc_env": "BSC_RPC_URL"
     }
 }
+
+# Alchemy API URLs for each chain
+ALCHEMY_URLS = {
+    "ethereum": "https://eth-mainnet.g.alchemy.com/v2",
+    "base": "https://base-mainnet.g.alchemy.com/v2",
+    "arbitrum": "https://arb-mainnet.g.alchemy.com/v2",
+    "bsc": "https://bnb-mainnet.g.alchemy.com/v2"
+}
+
+# Estimated blocks per 24 hours based on average block time
+# Average block times: Ethereum ~12s, Base ~2s, Arbitrum ~0.25s, BSC ~3s
+BLOCKS_PER_24H = {
+    "ethereum": 7200,   # 86400 / 12
+    "base": 43200,      # 86400 / 2
+    "arbitrum": 345600, # 86400 / 0.25
+    "bsc": 28800        # 86400 / 3
+}

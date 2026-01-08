@@ -62,13 +62,8 @@ def load_config(did: str, strategy: str, blockchain: str = "CHIA", wallet: int =
         
         if alchemy_api_key:
             # Build Alchemy URL using shared API key
-            alchemy_urls = {
-                "ethereum": "https://eth-mainnet.g.alchemy.com/v2",
-                "base": "https://base-mainnet.g.alchemy.com/v2",
-                "arbitrum": "https://arb-mainnet.g.alchemy.com/v2",
-                "bsc": "https://bnb-mainnet.g.alchemy.com/v2"
-            }
-            base_url = alchemy_urls.get(evm_chain.lower())
+            from constants.constant import ALCHEMY_URLS
+            base_url = ALCHEMY_URLS.get(evm_chain.lower())
             if base_url:
                 CONFIG["RPC_URL"] = f"{base_url}/{alchemy_api_key}"
             else:
