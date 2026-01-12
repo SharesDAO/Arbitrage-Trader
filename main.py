@@ -377,10 +377,30 @@ def sync(did: str, strategy: str, blockchain: str, chain: str = None, days: int 
         from strategy.grid import GridStockTrader
         traders = []
         for stock in CONFIG["TRADING_SYMBOLS"]:
-            ticker = stock if isinstance(stock, str) else stock.get("TICKER")
-            grid_num = stock.get("GRID_NUM", 5) if isinstance(stock, dict) else 5
+            # Ensure stock is a dict (if it's a string, skip or handle appropriately)
+            if isinstance(stock, str):
+                logger.warning(f"Skipping stock {stock} - Grid strategy requires dict configuration")
+                continue
+            
+            # Update invest key based on blockchain (same as execute_grid)
+            if CONFIG["BLOCKCHAIN"] == "CHIA":
+                invest_key = "INVEST_XCH"
+            elif CONFIG["BLOCKCHAIN"] == "SOLANA":
+                invest_key = "INVEST_SOL"
+            elif CONFIG["BLOCKCHAIN"] == "EVM":
+                invest_key = "INVEST_USDC"
+            else:
+                invest_key = None
+                
+            if invest_key and invest_key in stock:
+                stock["INVEST_CRYPTO"] = stock[invest_key]
+            else:
+                stock["INVEST_CRYPTO"] = 0
+            
+            # Create grids for each stock
+            grid_num = stock.get("GRID_NUM", 5)
             for i in range(grid_num):
-                traders.append(GridStockTrader(i, ticker, logger))
+                traders.append(GridStockTrader(i, stock, logger))
     else:
         print(f"Unknown strategy: {strategy}")
         return
