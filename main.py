@@ -405,9 +405,10 @@ def sync(did: str, strategy: str, blockchain: str, chain: str = None, days: int 
         print(f"Unknown strategy: {strategy}")
         return
     
-    # Check pending positions
+    # Check pending positions using the transactions fetched by sync_transactions_manual
     try:
-        check_pending_positions(traders, logger)
+        pre_fetched_txs = result.get("fetched_token_txs")
+        check_pending_positions(traders, logger, pre_fetched_token_txs=pre_fetched_txs)
         print("Pending positions check completed")
     except Exception as e:
         logger.error(f"Failed to check pending positions: {e}")

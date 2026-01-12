@@ -391,7 +391,16 @@ def call_solana_rpc(method, params=None):
         raise requests.exceptions.RequestException(f"Network error: {e}")
 
 
-def check_pending_positions(traders, logger):
+def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
+    """
+    Check pending positions and match them with transactions.
+    
+    Args:
+        traders: List of trader objects to check
+        logger: Logger instance
+        pre_fetched_token_txs: Optional pre-fetched token transactions dict (from sync_transactions_manual).
+                                If provided, will use these transactions instead of fetching new ones.
+    """
     token_balance = get_token_balance()
     
     # Get transactions based on blockchain type
@@ -404,8 +413,14 @@ def check_pending_positions(traders, logger):
     elif CONFIG["BLOCKCHAIN"] == "EVM":
         # For EVM, we don't need native token transactions since orders use ERC20 tokens (USDC/stock tokens)
         crypto_txs = []  # Skip native token tx fetching for EVM
-        all_token_txs = get_erc20_token_txs(logger)
-        logger.info(f"Fetched {sum(len(txs) for txs in all_token_txs.values())} ERC20 token txs.")
+        if pre_fetched_token_txs is not None:
+            # Use pre-fetched transactions from sync_transactions_manual
+            all_token_txs = pre_fetched_token_txs
+            logger.info(f"Using pre-fetched transactions: {sum(len(txs) for txs in all_token_txs.values())} ERC20 token txs.")
+        else:
+            # Fetch transactions normally
+            all_token_txs = get_erc20_token_txs(logger)
+            logger.info(f"Fetched {sum(len(txs) for txs in all_token_txs.values())} ERC20 token txs.")
         # Token divisor will be determined per token (USDC uses CONFIG["USDC_DECIMALS"], stock tokens typically use 18)
         token_divisor = 10**CONFIG.get("USDC_DECIMALS", 18)  # Default to USDC decimals
     else:
@@ -1968,7 +1983,8 @@ def sync_transactions_manual(logger, days=None, from_block=None, reset_last_chec
             "from_block": from_block,
             "current_block": current_block,
             "transactions_found": total_txs,
-            "token_txs": {k: len(v) for k, v in token_txs.items()}
+            "token_txs": {k: len(v) for k, v in token_txs.items()},
+            "fetched_token_txs": token_txs  # Return the actual transactions for check_pending_positions to use
         }
         
     except Exception as e:
