@@ -1650,8 +1650,7 @@ def get_erc20_token_txs(logger, from_block=None):
             for transfer in transfers:
                 try:
                     token_address = transfer.get("rawContract", {}).get("address", "").lower()
-<<<<<<< Updated upstream
-                    
+                  
                     if not token_address:
                         logger.debug(f"Skipping transfer with no token address: {transfer.get('hash')}")
                         skipped_count += 1
@@ -1660,13 +1659,6 @@ def get_erc20_token_txs(logger, from_block=None):
                     if token_address not in tokens_to_check:
                         logger.debug(f"Skipping transfer for unwanted token {token_address}: {transfer.get('hash')}")
                         skipped_count += 1
-=======
-                    if not token_address:
-                        logger.debug(f"Skipping transfer with no token address: {transfer.get('hash', 'N/A')}")
-                        continue
-                    if token_address not in tokens_to_check:
-                        logger.debug(f"Skipping transfer for token {token_address} not in tokens_to_check list (tx: {transfer.get('hash', 'N/A')})")
->>>>>>> Stashed changes
                         continue
                     
                     tx_hash = transfer.get("hash", "")
