@@ -437,7 +437,11 @@ def check_pending_positions(traders, logger):
                     asset_id = asset_id.lower()
                 if asset_id not in all_token_txs:
                     all_token_txs[asset_id] = []
+                    logger.debug(f"No transactions found for asset_id {asset_id} (ticker: {trader.ticker})")
                 token_txs = all_token_txs[asset_id]
+                logger.debug(f"Checking {len(token_txs)} transactions for {trader.stock} (asset_id: {asset_id}, ticker: {trader.ticker})")
+                
+                # First, try to match transactions by memo
                 for tx in token_txs:
                     if tx["sent"] == 0:
                         try:
@@ -1460,8 +1464,14 @@ def get_evm_txs(logger):
     return []
 
 
-def get_erc20_token_txs(logger):
-    """Get ERC20 token (USDC and stock tokens) transactions for EVM chain using Alchemy API"""
+def get_erc20_token_txs(logger, from_block=None):
+    """
+    Get ERC20 token (USDC and stock tokens) transactions for EVM chain using Alchemy API
+    
+    Args:
+        logger: Logger instance
+        from_block: Optional block number to start from. If None, uses last_checked_block or estimates 24h ago
+    """
     global last_checked_block
     
     try:
@@ -1500,11 +1510,14 @@ def get_erc20_token_txs(logger):
         
         alchemy_url = f"{base_url}/{alchemy_api_key}"
         
-        # Determine starting block: use last checked block if exists, otherwise estimate 24 hours ago
+        # Determine starting block: use provided from_block, or last checked block, or estimate 24 hours ago
         current_block = w3.eth.block_number
         chain_key = f"{evm_chain}_{address.lower()}"
         
-        if chain_key in last_checked_block:
+        if from_block is not None:
+            # Use provided from_block (for manual sync)
+            logger.info(f"Manual sync: fetching transactions from block {from_block}")
+        elif chain_key in last_checked_block:
             # Use last checked block + 1 to avoid duplicates
             from_block = last_checked_block[chain_key] + 1
             logger.info(f"Fetching transactions from block {from_block} (last checked: {last_checked_block[chain_key]})")
@@ -1637,6 +1650,7 @@ def get_erc20_token_txs(logger):
             for transfer in transfers:
                 try:
                     token_address = transfer.get("rawContract", {}).get("address", "").lower()
+<<<<<<< Updated upstream
                     
                     if not token_address:
                         logger.debug(f"Skipping transfer with no token address: {transfer.get('hash')}")
@@ -1646,6 +1660,13 @@ def get_erc20_token_txs(logger):
                     if token_address not in tokens_to_check:
                         logger.debug(f"Skipping transfer for unwanted token {token_address}: {transfer.get('hash')}")
                         skipped_count += 1
+=======
+                    if not token_address:
+                        logger.debug(f"Skipping transfer with no token address: {transfer.get('hash', 'N/A')}")
+                        continue
+                    if token_address not in tokens_to_check:
+                        logger.debug(f"Skipping transfer for token {token_address} not in tokens_to_check list (tx: {transfer.get('hash', 'N/A')})")
+>>>>>>> Stashed changes
                         continue
                     
                     tx_hash = transfer.get("hash", "")
@@ -1662,9 +1683,14 @@ def get_erc20_token_txs(logger):
                     seen_tx_hashes.add(tx_hash)
                     
                     # Check if we've already processed this transaction (by token)
-                    last_tx = last_checked_tx.get(token_address)
-                    if last_tx and tx_hash == last_tx:
-                        continue  # Skip this transaction, but continue processing others
+                    # IMPORTANT: We should NOT skip transactions based on last_checked_tx
+                    # because a transaction might have been fetched but not properly matched
+                    # to a pending order. We need to re-check it every time until the order is confirmed.
+                    # The seen_tx_hashes set already prevents duplicates within the same fetch.
+                    # last_tx = last_checked_tx.get(token_address)
+                    # if last_tx and tx_hash == last_tx:
+                    #     logger.debug(f"Skipping already processed transaction {tx_hash} for token {token_address}")
+                    #     continue  # Skip this transaction, but continue processing others
                     
                     # Determine if this is a sent or received transaction
                     from_addr = transfer.get("from", "").lower()
@@ -1737,8 +1763,13 @@ def get_erc20_token_txs(logger):
                         tx_obj_full = w3.eth.get_transaction(tx_hash)
                         if tx_obj_full and tx_obj_full.input:
                             memo = decode_memo_from_erc20_data(tx_obj_full.input.hex())
+                            if memo is None:
+                                logger.debug(f"No memo found in transaction {tx_hash} (input length: {len(tx_obj_full.input.hex())})")
+                            else:
+                                logger.debug(f"Successfully decoded memo from transaction {tx_hash}: {memo}")
                     except Exception as e:
-                        logger.debug(f"Failed to decode memo from transaction {tx_hash}: {e}")
+                        logger.warning(f"Failed to decode memo from transaction {tx_hash}: {e}")
+                        # Still add the transaction even if memo decoding fails
                     
                     tx_obj = {
                         "signature": tx_hash,
@@ -1803,3 +1834,151 @@ def get_erc20_token_txs(logger):
     except Exception as e:
         logger.error(f"Failed to get ERC20 token transactions: {str(e)}")
         return {}
+
+
+def check_specific_transaction(tx_hash: str, logger=None):
+    """
+    Check a specific transaction hash to debug why it might be missed.
+    This function fetches the transaction directly and attempts to parse it.
+    
+    Args:
+        tx_hash: Transaction hash to check
+        logger: Optional logger instance
+    
+    Returns:
+        dict with transaction details and parsing results
+    """
+    import logging
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    result = {
+        "tx_hash": tx_hash,
+        "found": False,
+        "memo": None,
+        "error": None,
+        "details": {}
+    }
+    
+    try:
+        if CONFIG["BLOCKCHAIN"] != "EVM":
+            result["error"] = f"This function only works for EVM chains, current chain: {CONFIG['BLOCKCHAIN']}"
+            return result
+        
+        w3 = get_web3()
+        address = Web3.to_checksum_address(CONFIG["ADDRESS"])
+        
+        # Get transaction from blockchain
+        try:
+            tx_obj = w3.eth.get_transaction(tx_hash)
+            result["found"] = True
+            result["details"]["from"] = tx_obj.get("from", "")
+            result["details"]["to"] = tx_obj.get("to", "")
+            result["details"]["value"] = str(tx_obj.get("value", 0))
+            result["details"]["input_length"] = len(tx_obj.get("input", b"").hex()) if tx_obj.get("input") else 0
+            
+            # Check if transaction is to/from our address
+            is_relevant = (
+                tx_obj.get("from", "").lower() == address.lower() or 
+                tx_obj.get("to", "").lower() == address.lower()
+            )
+            result["details"]["is_relevant"] = is_relevant
+            
+            # Try to decode memo
+            if tx_obj.get("input"):
+                memo = decode_memo_from_erc20_data(tx_obj.input.hex())
+                result["memo"] = memo
+                result["details"]["memo_decoded"] = memo is not None
+            
+            # Get transaction receipt to check if it's confirmed
+            try:
+                receipt = w3.eth.get_transaction_receipt(tx_hash)
+                result["details"]["status"] = receipt.get("status")
+                result["details"]["block_number"] = receipt.get("blockNumber")
+                result["details"]["confirmed"] = receipt.get("status") == 1
+            except Exception as e:
+                result["details"]["receipt_error"] = str(e)
+                
+        except Exception as e:
+            result["error"] = f"Failed to fetch transaction: {str(e)}"
+            logger.error(result["error"])
+            
+    except Exception as e:
+        result["error"] = f"Unexpected error: {str(e)}"
+        logger.error(result["error"])
+    
+    return result
+
+
+def sync_transactions_manual(logger, days=None, from_block=None, reset_last_checked=False):
+    """
+    Manually sync transactions by re-fetching from a specific block or days ago.
+    This is useful when transactions might have been missed.
+    
+    Args:
+        logger: Logger instance
+        days: Number of days to look back (e.g., 7 for 7 days). If None, uses from_block or resets
+        from_block: Specific block number to start from. If None and days is None, resets to current block
+        reset_last_checked: If True, resets last_checked_block to allow re-checking all transactions
+    
+    Returns:
+        dict with sync results
+    """
+    global last_checked_block
+    
+    if CONFIG["BLOCKCHAIN"] != "EVM":
+        logger.error("Manual sync is only supported for EVM chains")
+        return {"success": False, "error": "Only EVM chains supported"}
+    
+    try:
+        w3 = get_web3()
+        address = Web3.to_checksum_address(CONFIG["ADDRESS"])
+        evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+        chain_key = f"{evm_chain}_{address.lower()}"
+        current_block = w3.eth.block_number
+        
+        # Determine from_block
+        if reset_last_checked:
+            # Reset last_checked_block to force re-checking
+            if chain_key in last_checked_block:
+                old_block = last_checked_block[chain_key]
+                del last_checked_block[chain_key]
+                logger.info(f"Reset last_checked_block for {chain_key} (was: {old_block})")
+            # Calculate from_block based on days or use current_block
+            if days is not None:
+                blocks_per_day = BLOCKS_PER_24H.get(evm_chain, 7200)
+                from_block = max(0, current_block - blocks_per_day * days)
+                logger.info(f"Manual sync: reset and fetching from {days} days ago (block {from_block})")
+            elif from_block is not None:
+                logger.info(f"Manual sync: reset and fetching from block {from_block}")
+            else:
+                # Reset but fetch from current block (will get no transactions, but resets the state)
+                from_block = current_block
+                logger.info(f"Manual sync: reset last_checked_block, fetching from current block {from_block}")
+        elif from_block is not None:
+            logger.info(f"Manual sync: fetching from block {from_block}")
+        elif days is not None:
+            blocks_per_day = BLOCKS_PER_24H.get(evm_chain, 7200)
+            from_block = max(0, current_block - blocks_per_day * days)
+            logger.info(f"Manual sync: fetching from {days} days ago (block {from_block})")
+        else:
+            logger.error("Must specify either days, from_block, or reset_last_checked=True")
+            return {"success": False, "error": "Must specify days, from_block, or reset_last_checked"}
+        
+        # Fetch transactions with the specified from_block
+        token_txs = get_erc20_token_txs(logger, from_block=from_block)
+        
+        total_txs = sum(len(txs) for txs in token_txs.values())
+        logger.info(f"Manual sync completed: found {total_txs} transactions")
+        
+        return {
+            "success": True,
+            "from_block": from_block,
+            "current_block": current_block,
+            "transactions_found": total_txs,
+            "token_txs": {k: len(v) for k, v in token_txs.items()}
+        }
+        
+    except Exception as e:
+        logger.error(f"Manual sync failed: {e}")
+        return {"success": False, "error": str(e)}

@@ -12,7 +12,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import get_crypto_price, sign_message
+from util.crypto import get_crypto_price, sign_message, sync_transactions_manual, check_pending_positions
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus, EVM_CHAINS
 from util.db import update_position
 from util.stock import STOCKS, get_pool_list, get_stock_price
@@ -302,8 +302,101 @@ def reset(volume: str, ticker: str, strategy: str, did: str, blockchain: str, wa
         print(f"Grid position cannot be reset!")
 
 
+@click.command("sync", help="Manually sync transactions and check pending orders")
+@click.option(
+    "-d",
+    "--did",
+    help="Your DID ID Hex. It must be registered on the SharesDAO.com",
+    type=str,
+    required=True
+)
+@click.option(
+    "-s",
+    "--strategy",
+    help="Your trading strategy name, e.g DCA, Grid",
+    type=str,
+    required=True
+)
+@click.option(
+    "-b",
+    "--blockchain",
+    help="Blockchain to use: CHIA, SOLANA, or EVM",
+    type=str,
+    default="EVM"
+)
+@click.option(
+    "-c",
+    "--chain",
+    help="EVM chain to use (required for EVM blockchain): ethereum, base, arbitrum, or bsc",
+    type=str,
+    required=False
+)
+@click.option(
+    "--days",
+    help="Number of days to look back (e.g., 7 for 7 days)",
+    type=int,
+    required=False
+)
+@click.option(
+    "--from-block",
+    help="Specific block number to start from",
+    type=int,
+    required=False
+)
+@click.option(
+    "--reset",
+    help="Reset last_checked_block to force re-checking all transactions",
+    is_flag=True,
+    default=False
+)
+def sync(did: str, strategy: str, blockchain: str, chain: str = None, days: int = None, from_block: int = None, reset: bool = False):
+    if blockchain.upper() != "EVM":
+        print("Manual sync is only supported for EVM chains")
+        return
+    
+    load_config(did, strategy.upper(), blockchain.upper(), None, chain)
+    
+    # Sync transactions
+    result = sync_transactions_manual(logger, days=days, from_block=from_block, reset_last_checked=reset)
+    
+    if not result.get("success"):
+        print(f"Sync failed: {result.get('error', 'Unknown error')}")
+        return
+    
+    print(f"Sync completed:")
+    print(f"  From block: {result.get('from_block')}")
+    print(f"  Current block: {result.get('current_block')}")
+    print(f"  Transactions found: {result.get('transactions_found')}")
+    print(f"  Token breakdown: {result.get('token_txs')}")
+    
+    # Load traders and check pending positions
+    if strategy.lower() == "dca":
+        from strategy.dca import DCAStockTrader
+        traders = [DCAStockTrader(stock, logger) for stock in CONFIG["TRADING_SYMBOLS"]]
+    elif strategy.lower() == "grid":
+        from strategy.grid import GridStockTrader
+        traders = []
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            ticker = stock if isinstance(stock, str) else stock.get("TICKER")
+            grid_num = stock.get("GRID_NUM", 5) if isinstance(stock, dict) else 5
+            for i in range(grid_num):
+                traders.append(GridStockTrader(i, ticker, logger))
+    else:
+        print(f"Unknown strategy: {strategy}")
+        return
+    
+    # Check pending positions
+    try:
+        check_pending_positions(traders, logger)
+        print("Pending positions check completed")
+    except Exception as e:
+        logger.error(f"Failed to check pending positions: {e}")
+        print(f"Error checking pending positions: {e}")
+
+
 cli.add_command(run)
 cli.add_command(liquidate)
 cli.add_command(reset)
+cli.add_command(sync)
 if __name__ == "__main__":
     cli()
