@@ -22,7 +22,7 @@ class BlockchainType(Enum):
 
 REQUEST_TIMEOUT = 60
 CONFIG = {}
-CONFIG["MAX_ORDER_TIME_OFFSET"] = 120
+CONFIG["MAX_ORDER_TIME_OFFSET"] = 600
 CONFIG["RESERVE_RATIO"] = 0.1
 # When you local system time is different from the server time, the offset between them. Don't change this unless you know what you are doing.
 

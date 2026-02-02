@@ -391,6 +391,36 @@ def call_solana_rpc(method, params=None):
         raise requests.exceptions.RequestException(f"Network error: {e}")
 
 
+def extract_order_timestamp(order_id: str) -> float:
+    """
+    Extract the numeric timestamp from an order_id string.
+    
+    Order IDs have the format: "1769099873TSLA0efcf0" where the first 10 digits are a Unix timestamp.
+    This function extracts and returns that timestamp as a float for proper numeric comparison.
+    
+    Args:
+        order_id: The order ID string from the transaction memo
+        
+    Returns:
+        The extracted timestamp as a float, or 0.0 if extraction fails
+    """
+    try:
+        # Extract the first 10 characters as the timestamp (Unix timestamp is 10 digits)
+        if len(order_id) >= 10:
+            timestamp_str = order_id[:10]
+            # Verify it's all digits
+            if timestamp_str.isdigit():
+                return float(timestamp_str)
+        # Fallback: try to extract any leading digits
+        import re
+        match = re.match(r'^(\d+)', order_id)
+        if match:
+            return float(match.group(1))
+        return 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
     """
     Check pending positions and match them with transactions.
@@ -460,8 +490,12 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                 for tx in token_txs:
                     if tx["sent"] == 0:
                         try:
+                            # Skip transactions with no memo
+                            if not tx["memo"]:
+                                logger.debug(f"Skipping Grid buy confirmation check for tx {tx.get('signature', 'unknown')}: no memo")
+                                continue
                             if "customer_id" in tx["memo"] and tx["memo"]["customer_id"] == trader.stock:
-                                if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
                                         trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                     if tx["memo"]["status"] == "COMPLETED":
                                         trader.position_status = PositionStatus.TRADABLE.name
@@ -480,6 +514,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                         confirmed = True
                                         break
                         except Exception as e:
+                            logger.error(f"Failed to check Grid buy confirmation for {trader.stock}: {str(e)}, tx={tx}")
                             continue
             # Check if the order is cancelled
             if confirmed:
@@ -489,11 +524,17 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                 # Check USDC transactions for cancellation
                 usdc_address = CONFIG["USDC_ADDRESS"].lower()
                 if usdc_address in all_token_txs:
+                    logger.debug(f"Checking {len(all_token_txs[usdc_address])} USDC transactions for buy cancellation of {trader.stock}")
                     for tx in all_token_txs[usdc_address]:
                         if tx["sent"] == 0:
                             try:
-                                if tx["memo"] and "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                                    if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                # Skip transactions with no memo
+                                if not tx["memo"]:
+                                    logger.debug(f"Skipping buy cancellation check for tx {tx.get('signature', 'unknown')}: no memo")
+                                    continue
+                                logger.debug(f"Checking buy cancellation: memo={tx['memo']}, ticker={trader.ticker}, stock={trader.stock}")
+                                if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
+                                    if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
                                             trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                         if tx["memo"]["status"] == "CANCELLED":
                                             if trader.type == StrategyType.DCA or (
@@ -521,17 +562,23 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                                 logger.info(f"Buy {trader.stock} cancelled")
                                                 break
                             except Exception as e:
-                                logger.error(f"Failed to check buy cancellation: {str(e)}")
+                                logger.error(f"Failed to check buy cancellation for {trader.stock}: {str(e)}, tx={tx}")
                                 continue
+                else:
+                    logger.debug(f"No USDC transactions found for buy cancellation check of {trader.stock}")
             else:
                 # For non-EVM chains, check native token transactions
                 for tx in crypto_txs:
                     if tx["sent"] == 0:
                         try:
+                            # Skip transactions with no memo
+                            if not tx["memo"]:
+                                logger.debug(f"Skipping buy cancellation check for tx: no memo")
+                                continue
                             # Check if the order is cancelled
-                            logger.info(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
+                            logger.debug(f"Checking buy cancellation: memo={tx['memo']}, ticker={trader.ticker}, timestamp={trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type={trader.type}, stock={trader.stock}")
                             if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                                if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
                                         trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                     if tx["memo"]["status"] == "CANCELLED":
                                         if trader.type == StrategyType.DCA or (
@@ -572,8 +619,13 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
             for tx in token_txs:
                 if tx["sent"] == 0:
                     try:
+                        # Skip transactions with no memo or invalid memo
+                        if not tx["memo"]:
+                            logger.debug(f"Skipping sell cancellation check for tx {tx.get('signature', 'unknown')}: no memo")
+                            continue
+                        logger.debug(f"Checking sell cancellation: memo={tx['memo']}, ticker={trader.ticker}, stock={trader.stock}")
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                            if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
                                     trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                 if tx["memo"]["status"] == "CANCELLED":
                                     if trader.type == StrategyType.DCA or trader.stock == tx["memo"]["customer_id"]:
@@ -586,6 +638,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                         logger.info(f"Sell {trader.stock} cancelled")
                                         break
                     except Exception as e:
+                        logger.error(f"Failed to check sell cancellation for {trader.stock}: {str(e)}, tx={tx}")
                         continue
             if confirmed:
                 continue
@@ -601,7 +654,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                 if tx["memo"] and "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                                     logger.debug(
                                         f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo'].get('order_id', 'N/A')}")
-                                    if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                    if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
                                             trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                         if tx["memo"]["status"] == "COMPLETED":
                                             if trader.type == StrategyType.DCA:
@@ -643,10 +696,14 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                 for tx in crypto_txs:
                     if tx["sent"] == 0:
                         try:
+                            # Skip transactions with no memo
+                            if not tx["memo"]:
+                                logger.debug(f"Skipping sell completion check for tx: no memo")
+                                continue
                             if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                                 logger.debug(
-                                    f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo']['order_id']}")
-                                if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
+                                    f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo'].get('order_id', 'N/A')}")
+                                if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
                                         trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
                                     if tx["memo"]["status"] == "COMPLETED":
                                         if trader.type == StrategyType.DCA:
