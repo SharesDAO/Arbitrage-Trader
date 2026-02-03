@@ -1582,7 +1582,7 @@ def get_erc20_token_txs(logger, from_block=None):
         
         alchemy_url = f"{base_url}/{alchemy_api_key}"
         
-        # Determine starting block: use provided from_block, or last checked block, or estimate 24 hours ago
+        # Determine starting block: use provided from_block, or estimate based on fetch history
         current_block = w3.eth.block_number
         chain_key = f"{evm_chain}_{address.lower()}"
         
@@ -1590,9 +1590,11 @@ def get_erc20_token_txs(logger, from_block=None):
             # Use provided from_block (for manual sync)
             logger.info(f"Manual sync: fetching transactions from block {from_block}")
         elif chain_key in last_checked_block:
-            # Use last checked block + 1 to avoid duplicates
-            from_block = last_checked_block[chain_key] + 1
-            logger.info(f"Fetching transactions from block {from_block} (last checked: {last_checked_block[chain_key]})")
+            # Not first time: fetch transactions from past 1 hour
+            blocks_24h = BLOCKS_PER_24H.get(evm_chain, 7200)  # Default to Ethereum if unknown
+            blocks_1h = blocks_24h // 24  # Calculate blocks per hour (24 hours / 24 = 1 hour)
+            from_block = max(0, current_block - blocks_1h)
+            logger.info(f"Fetching transactions from block {from_block} (past 1 hour, ~{blocks_1h} blocks)")
         else:
             # First time: estimate block height 24 hours ago based on average block time
             blocks_24h = BLOCKS_PER_24H.get(evm_chain, 7200)  # Default to Ethereum if unknown
