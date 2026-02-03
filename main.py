@@ -12,7 +12,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import get_crypto_price, sign_message, sync_transactions_manual, check_pending_positions
+from util.crypto import get_crypto_price, sign_message, sync_transactions_manual, check_pending_positions, confirm_order_by_transaction
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus, EVM_CHAINS
 from util.db import update_position
 from util.stock import STOCKS, get_pool_list, get_stock_price
@@ -415,9 +415,163 @@ def sync(did: str, strategy: str, blockchain: str, chain: str = None, days: int 
         print(f"Error checking pending positions: {e}")
 
 
+@click.command("confirm", help="Manually confirm an order using a specific transaction hash")
+@click.option(
+    "-d",
+    "--did",
+    help="Your DID ID Hex. It must be registered on the SharesDAO.com",
+    type=str,
+    required=True
+)
+@click.option(
+    "-s",
+    "--strategy",
+    help="Your trading strategy name, e.g DCA, Grid",
+    type=str,
+    required=True
+)
+@click.option(
+    "-b",
+    "--blockchain",
+    help="Blockchain to use: CHIA, SOLANA, or EVM",
+    type=str,
+    default="EVM"
+)
+@click.option(
+    "-c",
+    "--chain",
+    help="EVM chain to use (required for EVM blockchain): ethereum, base, arbitrum, or bsc",
+    type=str,
+    required=False
+)
+@click.option(
+    "-t",
+    "--tx-hash",
+    help="The transaction hash to use for confirmation",
+    type=str,
+    required=True
+)
+@click.option(
+    "-p",
+    "--position",
+    help="The position/customer_id to confirm (e.g., 'TQQQ-Grid34' or 'TSLA' for DCA)",
+    type=str,
+    required=True
+)
+def confirm(did: str, strategy: str, blockchain: str, chain: str, tx_hash: str, position: str):
+    """Manually confirm an order using a specific transaction hash.
+    
+    This command is useful when:
+    - Automatic confirmation fails due to timezone issues
+    - Transactions are missed due to block range limits
+    - Manual intervention is needed to fix stuck orders
+    
+    Example usage:
+        python main.py confirm -d YOUR_DID -s grid -b EVM -c arbitrum -t 0x123... -p TQQQ-Grid34
+    """
+    if blockchain.upper() != "EVM":
+        print("Manual confirmation is only supported for EVM chains")
+        return
+    
+    load_config(did, strategy.upper(), blockchain.upper(), None, chain)
+    
+    # Find the trader for the specified position
+    trader = None
+    
+    if strategy.lower() == "dca":
+        from strategy.dca import DCAStockTrader
+        # For DCA, the position is just the ticker
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            if stock == position or stock == position.replace("-DCA", ""):
+                trader = DCAStockTrader(stock, logger)
+                break
+        if trader is None:
+            print(f"Position '{position}' not found in DCA trading symbols: {CONFIG['TRADING_SYMBOLS']}")
+            return
+            
+    elif strategy.lower() == "grid":
+        from strategy.grid import GridStockTrader
+        # For Grid, position is like "TQQQ-Grid34"
+        # Parse ticker and grid index from position
+        import re
+        match = re.match(r"^(.+)-Grid(\d+)$", position)
+        if not match:
+            print(f"Invalid Grid position format: '{position}'. Expected format: 'TICKER-GridN' (e.g., 'TQQQ-Grid34')")
+            return
+        
+        ticker = match.group(1)
+        grid_index = int(match.group(2))
+        
+        # Find the stock config
+        stock_config = None
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            if isinstance(stock, dict) and stock.get("TICKER") == ticker:
+                stock_config = stock
+                break
+        
+        if stock_config is None:
+            print(f"Ticker '{ticker}' not found in Grid trading symbols")
+            return
+        
+        # Update invest key based on blockchain
+        if CONFIG["BLOCKCHAIN"] == "CHIA":
+            invest_key = "INVEST_XCH"
+        elif CONFIG["BLOCKCHAIN"] == "SOLANA":
+            invest_key = "INVEST_SOL"
+        elif CONFIG["BLOCKCHAIN"] == "EVM":
+            invest_key = "INVEST_USDC"
+        else:
+            invest_key = None
+            
+        if invest_key and invest_key in stock_config:
+            stock_config["INVEST_CRYPTO"] = stock_config[invest_key]
+        else:
+            stock_config["INVEST_CRYPTO"] = 0
+        
+        # Check grid index is valid
+        grid_num = stock_config.get("GRID_NUM", 5)
+        if grid_index < 0 or grid_index >= grid_num:
+            print(f"Grid index {grid_index} is out of range (0-{grid_num-1}) for {ticker}")
+            return
+        
+        trader = GridStockTrader(grid_index, stock_config, logger)
+    else:
+        print(f"Unknown strategy: {strategy}")
+        return
+    
+    # Display current position info
+    print(f"\n=== Current Position ===")
+    print(f"Position: {trader.stock}")
+    print(f"Ticker: {trader.ticker}")
+    print(f"Status: {trader.position_status}")
+    print(f"Volume: {trader.volume}")
+    print(f"Total Cost: {trader.total_cost}")
+    print(f"Last Updated: {trader.last_updated}")
+    
+    # Confirm the order
+    print(f"\n=== Processing Transaction ===")
+    print(f"Transaction Hash: {tx_hash}")
+    
+    result = confirm_order_by_transaction(tx_hash, trader, logger)
+    
+    if result.get("success"):
+        print(f"\n=== Confirmation Successful ===")
+        print(f"Action: {result['details'].get('action', 'N/A')}")
+        print(f"Status before: {result['details'].get('position_status_before', 'N/A')}")
+        print(f"Status after: {result['details'].get('position_status_after', 'N/A')}")
+        if result['details'].get('memo'):
+            print(f"Memo: {result['details']['memo']}")
+    else:
+        print(f"\n=== Confirmation Failed ===")
+        print(f"Error: {result.get('error', 'Unknown error')}")
+        if result.get('details'):
+            print(f"Details: {result['details']}")
+
+
 cli.add_command(run)
 cli.add_command(liquidate)
 cli.add_command(reset)
 cli.add_command(sync)
+cli.add_command(confirm)
 if __name__ == "__main__":
     cli()

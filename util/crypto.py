@@ -1974,6 +1974,213 @@ def check_specific_transaction(tx_hash: str, logger=None):
     return result
 
 
+def confirm_order_by_transaction(tx_hash: str, trader, logger):
+    """
+    Manually confirm an order using a specific transaction hash.
+    This bypasses the normal time-based filtering to force confirmation.
+    
+    Args:
+        tx_hash: Transaction hash to use for confirmation
+        trader: The trader object (GridStockTrader or DCAStockTrader) to update
+        logger: Logger instance
+    
+    Returns:
+        dict with confirmation results
+    """
+    from util.db import update_position, get_last_trade, delete_trade
+    
+    result = {
+        "success": False,
+        "tx_hash": tx_hash,
+        "error": None,
+        "details": {}
+    }
+    
+    try:
+        if CONFIG["BLOCKCHAIN"] != "EVM":
+            result["error"] = f"This function only works for EVM chains, current chain: {CONFIG['BLOCKCHAIN']}"
+            return result
+        
+        w3 = get_web3()
+        
+        # Fetch transaction
+        try:
+            tx_obj = w3.eth.get_transaction(tx_hash)
+        except Exception as e:
+            result["error"] = f"Failed to fetch transaction: {str(e)}"
+            return result
+        
+        # Check if transaction is confirmed
+        try:
+            receipt = w3.eth.get_transaction_receipt(tx_hash)
+            if receipt.get("status") != 1:
+                result["error"] = f"Transaction failed or not confirmed (status: {receipt.get('status')})"
+                return result
+            result["details"]["block_number"] = receipt.get("blockNumber")
+        except Exception as e:
+            result["error"] = f"Transaction not confirmed on chain: {str(e)}"
+            return result
+        
+        # Decode memo from transaction
+        if not tx_obj.get("input"):
+            result["error"] = "Transaction has no input data"
+            return result
+        
+        memo = decode_memo_from_erc20_data(tx_obj.input.hex())
+        if not memo:
+            result["error"] = "Could not decode memo from transaction"
+            return result
+        
+        result["details"]["memo"] = memo
+        
+        # Validate memo has required fields
+        required_fields = ["symbol", "status", "customer_id"]
+        for field in required_fields:
+            if field not in memo:
+                result["error"] = f"Memo missing required field: {field}"
+                return result
+        
+        # Validate transaction matches the trader
+        if memo.get("symbol") != trader.ticker:
+            result["error"] = f"Transaction symbol '{memo.get('symbol')}' does not match trader ticker '{trader.ticker}'"
+            return result
+        
+        if memo.get("customer_id") != trader.stock:
+            result["error"] = f"Transaction customer_id '{memo.get('customer_id')}' does not match trader stock '{trader.stock}'"
+            return result
+        
+        # Get transaction amount
+        # For ERC20, decode amount from input data (bytes 36-68 is the amount)
+        input_hex = tx_obj.input.hex()
+        if input_hex.startswith("0x"):
+            input_hex = input_hex[2:]
+        
+        # ERC20 transfer: 4 bytes selector + 32 bytes address + 32 bytes amount
+        if len(input_hex) >= 136:
+            amount_hex = input_hex[72:136]
+            amount = int(amount_hex, 16)
+        else:
+            amount = 0
+        
+        result["details"]["amount_raw"] = amount
+        
+        # Determine token type and decimals
+        token_address = tx_obj.get("to", "").lower()
+        usdc_address = CONFIG["USDC_ADDRESS"].lower()
+        
+        if token_address == usdc_address:
+            decimals = CONFIG["USDC_DECIMALS"]
+            token_type = "USDC"
+        else:
+            decimals = 18  # Stock tokens typically use 18 decimals
+            token_type = "STOCK"
+        
+        amount_human = amount / (10 ** decimals)
+        result["details"]["amount"] = amount_human
+        result["details"]["token_type"] = token_type
+        result["details"]["decimals"] = decimals
+        
+        # Process based on status
+        status = memo.get("status")
+        side = memo.get("side", "").upper()
+        
+        result["details"]["status"] = status
+        result["details"]["side"] = side
+        result["details"]["position_status_before"] = trader.position_status
+        
+        if status == "CANCELLED":
+            if side == "BUY" and trader.position_status == PositionStatus.PENDING_BUY.name:
+                # Buy order cancelled - revert the position
+                last_trade = get_last_trade(trader.stock)
+                if last_trade:
+                    trader.volume -= last_trade[4]
+                    trader.total_cost -= last_trade[5]
+                    if trader.type == StrategyType.DCA:
+                        trader.buy_count -= 1
+                    trader.last_updated = datetime.now()
+                    update_position(trader)
+                    delete_trade(last_trade[0])
+                    
+                    # Check if there are more trades
+                    last_trade = get_last_trade(trader.stock)
+                    if last_trade is None or last_trade[2] == 'SELL':
+                        trader.last_buy_price = 0
+                        trader.avg_price = 0
+                        trader.volume = 0
+                        trader.total_cost = 0
+                    else:
+                        if trader.volume > 0:
+                            trader.avg_price = trader.total_cost / trader.volume
+                        trader.last_buy_price = last_trade[3]
+                
+                trader.position_status = PositionStatus.TRADABLE.name
+                trader.last_updated = datetime.now()
+                update_position(trader)
+                result["success"] = True
+                result["details"]["action"] = "Buy order cancelled, position reverted"
+                logger.info(f"Manually confirmed buy cancellation for {trader.stock} via tx {tx_hash}")
+                
+            elif side == "SELL" and trader.position_status in [PositionStatus.PENDING_SELL.name, PositionStatus.PENDING_LIQUIDATION.name]:
+                # Sell order cancelled - revert to tradable
+                trader.position_status = PositionStatus.TRADABLE.name
+                trader.last_updated = datetime.now()
+                update_position(trader)
+                
+                last_trade = get_last_trade(trader.stock)
+                if last_trade:
+                    delete_trade(last_trade[0])
+                
+                result["success"] = True
+                result["details"]["action"] = "Sell order cancelled, position reverted"
+                logger.info(f"Manually confirmed sell cancellation for {trader.stock} via tx {tx_hash}")
+            else:
+                result["error"] = f"Cannot process CANCELLED for side={side}, current position_status={trader.position_status}"
+                
+        elif status == "COMPLETED":
+            if side == "BUY" and trader.position_status == PositionStatus.PENDING_BUY.name:
+                # Buy order completed
+                trader.position_status = PositionStatus.TRADABLE.name
+                if token_type == "STOCK" and amount_human > 0:
+                    trader.volume = amount_human
+                trader.last_updated = datetime.now()
+                update_position(trader)
+                result["success"] = True
+                result["details"]["action"] = f"Buy order completed, volume set to {trader.volume}"
+                logger.info(f"Manually confirmed buy completion for {trader.stock} via tx {tx_hash}")
+                
+            elif side == "SELL" and trader.position_status in [PositionStatus.PENDING_SELL.name, PositionStatus.PENDING_LIQUIDATION.name]:
+                # Sell order completed
+                if token_type == "USDC" and amount_human > 0:
+                    trader.profit += amount_human - trader.total_cost
+                trader.position_status = PositionStatus.TRADABLE.name
+                trader.volume = 0
+                if trader.type == StrategyType.GRID:
+                    trader.buy_count = trader.buy_count + 1
+                elif trader.type == StrategyType.DCA:
+                    trader.buy_count = 0
+                trader.last_buy_price = 0
+                trader.total_cost = 0
+                trader.avg_price = 0
+                trader.current_price = 0
+                trader.last_updated = datetime.now()
+                update_position(trader)
+                result["success"] = True
+                result["details"]["action"] = f"Sell order completed, profit updated"
+                logger.info(f"Manually confirmed sell completion for {trader.stock} via tx {tx_hash}")
+            else:
+                result["error"] = f"Cannot process COMPLETED for side={side}, current position_status={trader.position_status}"
+        else:
+            result["error"] = f"Unknown status in memo: {status}"
+        
+        result["details"]["position_status_after"] = trader.position_status
+        
+    except Exception as e:
+        result["error"] = f"Unexpected error: {str(e)}"
+        logger.error(f"Error confirming order by transaction: {e}")
+    
+    return result
+
+
 def sync_transactions_manual(logger, days=None, from_block=None, reset_last_checked=False):
     """
     Manually sync transactions by re-fetching from a specific block or days ago.
