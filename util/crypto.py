@@ -47,6 +47,29 @@ HEADERS = {
 }
 MAX_RETRIES = 3
 
+def extract_timestamp_from_order_id(order_id: str) -> float:
+    """
+    Extract timestamp from order_id string.
+    Order_id format: {timestamp}{other_content}, e.g., "1770147712COINed0d4c"
+    
+    Args:
+        order_id: Order ID string that starts with a timestamp
+        
+    Returns:
+        Timestamp as float, or 0.0 if extraction fails
+    """
+    if not order_id:
+        return 0.0
+    
+    # Extract leading numeric part (timestamp)
+    match = re.match(r'^(\d+)', order_id)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
+
 def load_xch_txs(xch_json_file):
     # 读取XCH交易数据
     with open(xch_json_file, 'r') as f:
@@ -400,23 +423,29 @@ def get_spl_token_txs(logger):
 def check_pending_positions(traders, logger, update: bool = False):
     token_balance = get_token_balance()
     
+    # Define constants at function start
+    SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
+    
     # Get transactions based on blockchain type
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
         crypto_txs = get_sol_txs(logger)
         all_token_txs = get_spl_token_txs(logger)
         logger.info(f"Fetched {len(crypto_txs)} SOL txs,  {len(all_token_txs)} SPL tokens")
-        SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
         token_divisor = 1_000_000_000
-    elif update:
+    elif CONFIG["BLOCKCHAIN"] == "CHIA" and update:
         crypto_txs = load_xch_txs(CONFIG["XCH_TX_FILE"])
         all_token_txs = load_cat_txs(CONFIG["CAT_TX_FILE"])
         logger.info(f"Fetched {len(crypto_txs)} XCH txs, {len(all_token_txs)} CAT tokens")
         token_divisor = CAT_MOJO
-    else:
+    elif CONFIG["BLOCKCHAIN"] == "CHIA":
         crypto_txs = fetch_xch_txs()
         all_token_txs = fetch_cat_txs()
         logger.info(f"Fetched {len(crypto_txs)} XCH txs, {len(all_token_txs)} CAT tokens")
         token_divisor = CAT_MOJO
+    else:
+        # For other blockchains (e.g., EVM), transactions should be handled elsewhere
+        logger.warning(f"Unsupported blockchain type: {CONFIG['BLOCKCHAIN']}")
+        return False
     
     for trader in traders:
         confirmed = False
@@ -441,15 +470,17 @@ def check_pending_positions(traders, logger, update: bool = False):
                     if tx["sent"] == 0:
                         try:
                             if "customer_id" in tx["memo"] and tx["memo"]["customer_id"] == trader.stock:
-                                if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
-                                        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                    if tx["memo"]["status"] == "COMPLETED":
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.volume = tx["amount"] / token_divisor
-                                        update_position(trader)
-                                        logger.info(f"Buy {trader.stock} confirmed")
-                                        confirmed = True
-                                        break
+                                if "order_id" in tx["memo"]:
+                                    order_timestamp = extract_timestamp_from_order_id(tx["memo"]["order_id"])
+                                    min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+                                    if order_timestamp > min_timestamp:
+                                        if tx["memo"]["status"] == "COMPLETED":
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            trader.volume = tx["amount"] / token_divisor
+                                            update_position(trader)
+                                            logger.info(f"Buy {trader.stock} confirmed")
+                                            confirmed = True
+                                            break
                         except Exception as e:
                             continue
             # Check if the order is cancelled
@@ -461,33 +492,38 @@ def check_pending_positions(traders, logger, update: bool = False):
                         # Check if the order is cancelled
                         logger.debug(f"Checking buy cancellation:{tx['memo']}, ticker: {trader.ticker}, timestamp: {trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type: {trader.type}, stock:{trader.stock}")
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
-                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                if tx["memo"]["status"] == "CANCELLED":
-                                    if trader.type == StrategyType.DCA or (
-                                            trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
-                                        last_trade = get_last_trade(trader.stock)
-                                        trader.volume -= last_trade[4]
-                                        trader.total_cost -= last_trade[5]
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        if trader.type == StrategyType.DCA:
-                                            trader.buy_count -= 1
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        delete_trade(last_trade[0])
-                                        last_trade = get_last_trade(trader.stock)
-                                        if last_trade is None or last_trade[2] == 'SELL':
-                                            trader.last_buy_price = 0
-                                            trader.avg_price = 0
-                                            trader.volume = 0
-                                            trader.total_cost = 0
-                                        else:
-                                            trader.avg_price = trader.total_cost / trader.volume
-                                            trader.last_buy_price = last_trade[3]
-                                        update_position(trader)
-                                        confirmed = True
-                                        logger.info(f"Buy {trader.stock} cancelled")
-                                        break
+                            if "order_id" in tx["memo"]:
+                                order_timestamp = extract_timestamp_from_order_id(tx["memo"]["order_id"])
+                                min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+                                if order_timestamp > min_timestamp:
+                                    if tx["memo"]["status"] == "CANCELLED":
+                                        if trader.type == StrategyType.DCA or (
+                                                trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
+                                            last_trade = get_last_trade(trader.stock)
+                                            if last_trade is None:
+                                                logger.warning(f"No last trade found for {trader.stock}, skipping cancellation")
+                                                continue
+                                            trader.volume -= last_trade[4]
+                                            trader.total_cost -= last_trade[5]
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            if trader.type == StrategyType.DCA:
+                                                trader.buy_count -= 1
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            delete_trade(last_trade[0])
+                                            last_trade = get_last_trade(trader.stock)
+                                            if last_trade is None or last_trade[2] == 'SELL':
+                                                trader.last_buy_price = 0
+                                                trader.avg_price = 0
+                                                trader.volume = 0
+                                                trader.total_cost = 0
+                                            else:
+                                                trader.avg_price = trader.total_cost / trader.volume
+                                                trader.last_buy_price = last_trade[3]
+                                            update_position(trader)
+                                            confirmed = True
+                                            logger.info(f"Buy {trader.stock} cancelled")
+                                            break
                     except Exception as e:
                         logger.error(f"Failed to check buy cancellation: {str(e)}")
                         continue
@@ -501,18 +537,21 @@ def check_pending_positions(traders, logger, update: bool = False):
                 if tx["sent"] == 0:
                     try:
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
-                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                if tx["memo"]["status"] == "CANCELLED":
-                                    if trader.type == StrategyType.DCA or trader.stock == tx["memo"]["customer_id"]:
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        last_trade = get_last_trade(trader.stock)
-                                        delete_trade(last_trade[0])
-                                        confirmed = True
-                                        logger.info(f"Sell {trader.stock} cancelled")
-                                        break
+                            if "order_id" in tx["memo"]:
+                                order_timestamp = extract_timestamp_from_order_id(tx["memo"]["order_id"])
+                                min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+                                if order_timestamp > min_timestamp:
+                                    if tx["memo"]["status"] == "CANCELLED":
+                                        if trader.type == StrategyType.DCA or trader.stock == tx["memo"]["customer_id"]:
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            last_trade = get_last_trade(trader.stock)
+                                            if last_trade is not None:
+                                                delete_trade(last_trade[0])
+                                            confirmed = True
+                                            logger.info(f"Sell {trader.stock} cancelled")
+                                            break
                     except Exception as e:
                         continue
             if confirmed:
@@ -524,39 +563,41 @@ def check_pending_positions(traders, logger, update: bool = False):
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                             logger.debug(
                                 f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo']['order_id']}")
-                            if "order_id" in tx["memo"] and tx["memo"]["order_id"] > str(
-                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                if tx["memo"]["status"] == "COMPLETED":
-                                    if trader.type == StrategyType.DCA:
-                                        # The order is created after the last update
-                                        trader.profit = 0
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.volume = 0
-                                        trader.buy_count = 0
-                                        trader.last_buy_price = 0
-                                        trader.total_cost = 0
-                                        trader.avg_price = 0
-                                        trader.current_price = 0
+                            if "order_id" in tx["memo"]:
+                                order_timestamp = extract_timestamp_from_order_id(tx["memo"]["order_id"])
+                                min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+                                if order_timestamp > min_timestamp:
+                                    if tx["memo"]["status"] == "COMPLETED":
+                                        if trader.type == StrategyType.DCA:
+                                            # The order is created after the last update
+                                            trader.profit = 0
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            trader.volume = 0
+                                            trader.buy_count = 0
+                                            trader.last_buy_price = 0
+                                            trader.total_cost = 0
+                                            trader.avg_price = 0
+                                            trader.current_price = 0
 
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        logger.info(f"Sell {trader.stock} confirmed")
-                                        break
-                                    if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
-                                        # The order is created after the last update
-                                        divisor = SOL_LAMPORTS if CONFIG["BLOCKCHAIN"] == "SOLANA" else XCH_MOJO
-                                        trader.profit += tx["amount"]/divisor - trader.total_cost
-                                        trader.position_status = PositionStatus.TRADABLE.name
-                                        trader.volume = 0
-                                        trader.buy_count = trader.buy_count+1
-                                        trader.last_buy_price = 0
-                                        trader.total_cost = 0
-                                        trader.avg_price = 0
-                                        trader.current_price = 0
-                                        trader.last_updated = datetime.now()
-                                        update_position(trader)
-                                        logger.info(f"Sell {trader.stock} confirmed")
-                                        break
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            logger.info(f"Sell {trader.stock} confirmed")
+                                            break
+                                        if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
+                                            # The order is created after the last update
+                                            divisor = SOL_LAMPORTS if CONFIG["BLOCKCHAIN"] == "SOLANA" else XCH_MOJO
+                                            trader.profit += tx["amount"]/divisor - trader.total_cost
+                                            trader.position_status = PositionStatus.TRADABLE.name
+                                            trader.volume = 0
+                                            trader.buy_count = trader.buy_count+1
+                                            trader.last_buy_price = 0
+                                            trader.total_cost = 0
+                                            trader.avg_price = 0
+                                            trader.current_price = 0
+                                            trader.last_updated = datetime.now()
+                                            update_position(trader)
+                                            logger.info(f"Sell {trader.stock} confirmed")
+                                            break
                     except Exception as e:
                         logger.error(f"Failed to confirm {trader.stock}: {e}")
                         continue
