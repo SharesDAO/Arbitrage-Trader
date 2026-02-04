@@ -34,8 +34,8 @@ price_cache = TTLCache(maxsize=100, ttl=30)
 tx_cache = TTLCache(maxsize=100, ttl=30)
 balance_cache = TTLCache(maxsize=10, ttl=10)
 token_cache = TTLCache(maxsize=10, ttl=10)
-cat_cache = TTLCache(maxsize=10, ttl=300)
-xch_cache = TTLCache(maxsize=10, ttl=300)
+cat_cache = TTLCache(maxsize=10, ttl=60)
+xch_cache = TTLCache(maxsize=10, ttl=60)
 last_checked_tx = {}
 CHIA_PATH = "chia"
 XCH_MOJO = 1000000000000
@@ -93,7 +93,7 @@ def load_cat_txs(cat_json_file):
 @cached(xch_cache)
 def fetch_xch_txs():
     try:
-        url = f"https://pro-api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}"
+        url = f"https://pro-api.spacescan.io/address/xch-transaction/{CONFIG['ADDRESS']}?count=200"
         response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
@@ -122,7 +122,7 @@ def fetch_xch_txs():
 @cached(cat_cache)
 def fetch_cat_txs():
     try:
-        url = f"https://pro-api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}?count=100"
+        url = f"https://pro-api.spacescan.io/address/token-transaction/{CONFIG['ADDRESS']}?count=200"
         response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
