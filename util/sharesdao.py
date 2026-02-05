@@ -1,10 +1,12 @@
 import json
+import calendar
+import time
 
 import requests
 from cachetools import TTLCache, cached
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG, PositionStatus
-from util.crypto import XCH_MOJO, get_crypto_balance, get_crypto_price
+from util.crypto import XCH_MOJO, get_crypto_balance, get_crypto_price, sign_message_by_key
 
 order_cache = TTLCache(maxsize=100, ttl=40)
 
@@ -69,3 +71,71 @@ def check_cash_reserve(traders, fund_xch, is_buy, logger):
     except Exception as e:
         logger.error(f"Failed to check reverse fund {CONFIG['FUND_ID']}. {e}")
         raise e
+
+
+def get_user_transactions(did_id, status=1, start_index=0, num_of_transactions=100, sort_by_ascending=False, logger=None):
+    """
+    Get user transactions from SharesDAO API
+    
+    Args:
+        did_id: DID ID in hex format
+        status: Transaction status (default: 1)
+        start_index: Starting index for pagination (default: 0)
+        num_of_transactions: Number of transactions to retrieve (default: 100)
+        sort_by_ascending: Sort order, False for descending (default: False)
+        logger: Optional logger instance
+        
+    Returns:
+        List of transaction dictionaries
+        
+    Raises:
+        Exception: If API request fails
+    """
+    url = f"https://api.sharesdao.com:8443/transaction/user"
+    
+    try:
+        # Generate timestamp
+        timestamp = str(calendar.timegm(time.gmtime()))
+        
+        # Create signature message: SharesDAO|Login|{timestamp}
+        message = f"SharesDAO|Login|{timestamp}"
+        signature = sign_message_by_key(message)
+        
+        # Prepare request payload
+        payload = {
+            "did_id": did_id,
+            "timestamp": timestamp,
+            "status": status,
+            "start_index": start_index,
+            "num_of_transactions": num_of_transactions,
+            "sort_by_ascending": sort_by_ascending,
+            "signature": signature
+        }
+        
+        if logger:
+            logger.debug(f"Requesting user transactions: {payload}")
+        
+        # Send POST request
+        response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+        
+        if response.status_code == 200:
+            transactions = response.json()
+            if logger:
+                logger.info(f"Retrieved {len(transactions)} transactions for DID {did_id}")
+            return transactions
+        else:
+            error_msg = f"Failed to get user transactions for DID {did_id}. Status: {response.status_code}, Response: {response.text}"
+            if logger:
+                logger.error(error_msg)
+            raise Exception(error_msg)
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"API request failed for user transactions: {e}"
+        if logger:
+            logger.error(error_msg)
+        raise Exception(error_msg)
+    except Exception as e:
+        error_msg = f"Failed to get user transactions: {e}"
+        if logger:
+            logger.error(error_msg)
+        raise Exception(error_msg)

@@ -11,7 +11,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import check_pending_positions, get_crypto_price, sign_message_by_key
+from util.crypto import check_pending_positions, check_order_confirmation, get_crypto_price, sign_message_by_key
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
 from util.sharesdao import get_pool_by_id
@@ -58,6 +58,7 @@ def load_config(strategy: str):
         data = json.loads(pool["description"])
         CONFIG["ADDRESS"] = data["address"]
         CONFIG["VAULT_HOST"] = data["host"]
+        CONFIG["DID_ID"] = data["pool_did"]  # Store DID ID for check_order_confirmation
     else:
         logger.error(f"Failed to get user trading strategy: {response.text}")
         raise Exception("Failed to get user trading strategy")
@@ -202,6 +203,7 @@ def update(xch: str, cat: str, strategy: str):
         return
     CONFIG["XCH_TX_FILE"] = xch
     CONFIG["CAT_TX_FILE"] = cat
+    # For update command, always use check_pending_positions with file data
     check_pending_positions(traders, logger, update=True)
 
 cli.add_command(run)

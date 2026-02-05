@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, trade
+from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, check_order_confirmation, trade
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
@@ -102,9 +102,14 @@ def execute_dca(logger):
 
         # Check if the positions are still pending
         try:
-            check_pending_positions(traders, logger)
+            if CONFIG["BLOCKCHAIN"] == "CHIA":
+                # Use check_order_confirmation for Chia blockchain
+                check_order_confirmation(traders, CONFIG.get("DID_ID"), logger)
+            else:
+                # Use check_pending_positions for other blockchains (e.g., SOLANA)
+                check_pending_positions(traders, logger)
         except Exception as e:
-            logger.error(f"Failed to check pending positions, please check your Chia wallet: {e}")
+            logger.error(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
         stock_balance = 0
         for trader in traders:
             current_buy_price, current_sell_price = get_stock_price(trader.stock, logger)

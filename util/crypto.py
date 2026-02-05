@@ -28,6 +28,7 @@ from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
 from util.db import update_position, get_last_trade, delete_trade
 from util.stock import STOCKS
+from util.sharesdao import get_user_transactions
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
@@ -155,7 +156,13 @@ def fetch_cat_txs():
             raise Exception("Failed to get CAT transactions")
         
         for tx in data["received_transactions"]["transactions"]:
-            tx["sent"] = 0
+            # Determine if transaction is sent or received
+            # Since this is in received_transactions, it's generally a received transaction
+            # But check 'from' field: if 'from' matches our address, it's actually sent by us
+            if "from" in tx and tx.get("from") == CONFIG.get("ADDRESS"):
+                tx["sent"] = 1  # We sent this transaction
+            else:
+                tx["sent"] = 0  # We received this transaction (default for received_transactions)
             tx["amount"] = tx["token_amount"] * CAT_MOJO
             try:
                 if len(tx["memo"][0]) > 81:
@@ -470,7 +477,8 @@ def check_pending_positions(traders, logger, update: bool = False):
                     if tx["sent"] == 0:
                         try:
                             if "customer_id" in tx["memo"] and tx["memo"]["customer_id"] == trader.stock:
-                                if "order_id" in tx["memo"]:
+                                # Check if order_id and status exist (new format)
+                                if "order_id" in tx["memo"] and "status" in tx["memo"]:
                                     order_timestamp = extract_timestamp_from_order_id(tx["memo"]["order_id"])
                                     min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
                                     if order_timestamp > min_timestamp:
@@ -561,9 +569,10 @@ def check_pending_positions(traders, logger, update: bool = False):
                 if tx["sent"] == 0:
                     try:
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            logger.debug(
-                                f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo']['order_id']}")
-                            if "order_id" in tx["memo"]:
+                            # Check if order_id and status exist (new format)
+                            if "order_id" in tx["memo"] and "status" in tx["memo"]:
+                                logger.debug(
+                                    f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo']['order_id']}")
                                 order_timestamp = extract_timestamp_from_order_id(tx["memo"]["order_id"])
                                 min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
                                 if order_timestamp > min_timestamp:
@@ -581,7 +590,7 @@ def check_pending_positions(traders, logger, update: bool = False):
 
                                             trader.last_updated = datetime.now()
                                             update_position(trader)
-                                            logger.info(f"Sell {trader.stock} confirmed")
+                                            logger.info(f"Sell {trader.stock} confirmed (with order_id)")
                                             break
                                         if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
                                             # The order is created after the last update
@@ -596,12 +605,311 @@ def check_pending_positions(traders, logger, update: bool = False):
                                             trader.current_price = 0
                                             trader.last_updated = datetime.now()
                                             update_position(trader)
-                                            logger.info(f"Sell {trader.stock} confirmed")
+                                            logger.info(f"Sell {trader.stock} confirmed (with order_id)")
                                             break
+                            # Fallback: if no order_id/status but symbol and customer_id match, confirm based on transaction time
+                            elif "order_id" not in tx["memo"] or "status" not in tx["memo"]:
+                                # Check if customer_id matches for GRID strategy
+                                if trader.type == StrategyType.GRID and "customer_id" in tx["memo"] and trader.stock == tx["memo"]["customer_id"]:
+                                    tx_time = tx.get("time")
+                                    if tx_time:
+                                        try:
+                                            tx_timestamp = datetime.fromisoformat(tx_time.replace("Z", "+00:00")).timestamp()
+                                            min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+                                            if tx_timestamp > min_timestamp:
+                                                divisor = SOL_LAMPORTS if CONFIG["BLOCKCHAIN"] == "SOLANA" else XCH_MOJO
+                                                trader.profit += tx["amount"]/divisor - trader.total_cost
+                                                trader.position_status = PositionStatus.TRADABLE.name
+                                                trader.volume = 0
+                                                trader.buy_count = trader.buy_count+1
+                                                trader.last_buy_price = 0
+                                                trader.total_cost = 0
+                                                trader.avg_price = 0
+                                                trader.current_price = 0
+                                                trader.last_updated = datetime.now()
+                                                update_position(trader)
+                                                logger.info(f"Sell {trader.stock} confirmed (fallback: no order_id, tx_time={tx_time})")
+                                                break
+                                        except Exception as e:
+                                            logger.debug(f"Failed to parse transaction time: {e}")
+                                    else:
+                                        # If no transaction time available, confirm anyway if customer_id matches
+                                        divisor = SOL_LAMPORTS if CONFIG["BLOCKCHAIN"] == "SOLANA" else XCH_MOJO
+                                        trader.profit += tx["amount"]/divisor - trader.total_cost
+                                        trader.position_status = PositionStatus.TRADABLE.name
+                                        trader.volume = 0
+                                        trader.buy_count = trader.buy_count+1
+                                        trader.last_buy_price = 0
+                                        trader.total_cost = 0
+                                        trader.avg_price = 0
+                                        trader.current_price = 0
+                                        trader.last_updated = datetime.now()
+                                        update_position(trader)
+                                        logger.info(f"Sell {trader.stock} confirmed (fallback: no order_id, no tx_time)")
+                                        break
+                                elif trader.type == StrategyType.DCA:
+                                    # For DCA, confirm if symbol matches and no order_id/status
+                                    tx_time = tx.get("time")
+                                    if tx_time:
+                                        try:
+                                            tx_timestamp = datetime.fromisoformat(tx_time.replace("Z", "+00:00")).timestamp()
+                                            min_timestamp = trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+                                            if tx_timestamp > min_timestamp:
+                                                trader.profit = 0
+                                                trader.position_status = PositionStatus.TRADABLE.name
+                                                trader.volume = 0
+                                                trader.buy_count = 0
+                                                trader.last_buy_price = 0
+                                                trader.total_cost = 0
+                                                trader.avg_price = 0
+                                                trader.current_price = 0
+                                                trader.last_updated = datetime.now()
+                                                update_position(trader)
+                                                logger.info(f"Sell {trader.stock} confirmed (fallback: no order_id, tx_time={tx_time})")
+                                                break
+                                        except Exception as e:
+                                            logger.debug(f"Failed to parse transaction time: {e}")
                     except Exception as e:
                         logger.error(f"Failed to confirm {trader.stock}: {e}")
                         continue
     return False
+
+
+def check_order_confirmation(traders, did_id, logger):
+    """
+    Check if pending orders are confirmed on the exchange using get_user_transactions.
+    Uses customer_id and created_date to match local orders with exchange transactions.
+    Updates trader based on strategy type (DCA/GRID) and order type (BUY/SELL).
+    
+    Args:
+        traders: List of trader objects with pending orders
+        did_id: DID ID in hex format for API authentication
+        logger: Logger instance
+        
+    Returns:
+        Number of confirmed orders
+    """
+    confirmed_count = 0
+    
+    # Define constants
+    SOL_LAMPORTS = 1_000_000_000  # 10^9 lamports in 1 SOL
+    
+    try:
+        # Get all pending traders (BUY or SELL)
+        pending_traders = [
+            t for t in traders 
+            if t.position_status in [PositionStatus.PENDING_BUY.name, PositionStatus.PENDING_SELL.name, PositionStatus.PENDING_LIQUIDATION.name]
+        ]
+        
+        if not pending_traders:
+            logger.debug("No pending orders to check")
+            return 0
+        
+        logger.info(f"Checking {len(pending_traders)} pending orders for confirmation")
+        
+        # Fetch transactions from exchange for all statuses (1, 2, 3, 4)
+        # Status 1: Pending, 2: Processing, 3: Cancelled, 4: Executed
+        all_transactions = []
+        for status in [3, 4]:
+            try:
+                transactions = get_user_transactions(
+                    did_id=did_id,
+                    status=status,
+                    start_index=0,
+                    num_of_transactions=200,
+                    sort_by_ascending=False,
+                    logger=logger
+                )
+                all_transactions.extend(transactions)
+            except Exception as e:
+                logger.warning(f"Failed to fetch transactions with status {status}: {e}")
+                continue
+        
+        logger.info(f"Retrieved {len(all_transactions)} transactions from exchange")
+        
+        # Match each pending trader with exchange transactions
+        for trader in pending_traders:
+            matched = False
+            is_buy_order = trader.position_status == PositionStatus.PENDING_BUY.name
+            
+            # Try to match by customer_id and created_date
+            for tx in all_transactions:
+                try:
+                    # Get customer_id from transaction (direct field)
+                    tx_customer_id = tx.get("customer_id")
+                    if tx_customer_id is None:
+                        continue
+                    
+                    # Get order side (BUY/SELL) from transaction type
+                    # type % 2 == 1 means BUY, otherwise SELL
+                    tx_type = tx.get("type")
+                    if tx_type is None:
+                        continue
+                    
+                    # Determine side from type: type % 2 == 1 is BUY, otherwise SELL
+                    tx_is_buy = (tx_type % 2 == 1)
+                    
+                    # Get created_date from transaction (int timestamp)
+                    tx_created_date = tx.get("created_date")
+                    
+                    # Match customer_id
+                    if tx_customer_id != trader.stock:
+                        continue
+                    
+                    # Match order side (BUY/SELL) using type
+                    if tx_is_buy != is_buy_order:
+                        continue
+                    
+                    # Match created_date (compare timestamps)
+                    # Convert trader.last_updated to timestamp for comparison
+                    trader_timestamp = trader.last_updated.timestamp() if hasattr(trader.last_updated, 'timestamp') else None
+                    
+                    if tx_created_date is not None:
+                        # created_date is an int timestamp (seconds since epoch)
+                        try:
+                            tx_timestamp = float(tx_created_date)
+                            
+                            # Allow small time difference (within 60 seconds) for matching
+                            if trader_timestamp and abs(tx_timestamp - trader_timestamp) > 60:
+                                continue
+                        except Exception as e:
+                            logger.debug(f"Failed to parse created_date for transaction {tx}: {e}")
+                            # If date parsing fails, still try to match by customer_id only
+                            pass
+                    
+                    # Found a match, check status
+                    tx_status = tx.get("status")
+                    if tx_status is None:
+                        continue
+                    
+                    matched = True
+                    
+                    # Get actual received amount from "request" field (direct field, string type)
+                    tx_request = tx.get("request")
+                    
+                    # Status 4: Executed
+                    if tx_status == 4:
+                        logger.info(f"Order confirmed (executed) for {trader.stock}, side: {'BUY' if is_buy_order else 'SELL'}")
+                        
+                        if is_buy_order:
+                            # Handle BUY order confirmation
+                            if trader.type == StrategyType.DCA:
+                                # For DCA, update volume from token balance
+                                token_balance = get_token_balance()
+                                asset_id = STOCKS[trader.ticker]["asset_id"]
+                                if asset_id in token_balance:
+                                    trader.volume = token_balance[asset_id]["balance"]
+                                trader.position_status = PositionStatus.TRADABLE.name
+                                trader.last_updated = datetime.now()
+                                update_position(trader)
+                                logger.info(f"Buy {trader.stock} confirmed (DCA)")
+                            elif trader.type == StrategyType.GRID:
+                                # For GRID, update volume from request field
+                                if tx_request is not None:
+                                    # Determine token divisor based on blockchain
+                                    if CONFIG["BLOCKCHAIN"] == "SOLANA":
+                                        token_divisor = SOL_LAMPORTS
+                                    else:
+                                        token_divisor = CAT_MOJO
+                                    trader.volume = float(tx_request) / token_divisor
+                                trader.position_status = PositionStatus.TRADABLE.name
+                                trader.last_updated = datetime.now()
+                                update_position(trader)
+                                logger.info(f"Buy {trader.stock} confirmed (GRID), volume: {trader.volume}")
+                        else:
+                            # Handle SELL order confirmation
+                            if trader.type == StrategyType.DCA:
+                                # For DCA, reset all fields
+                                trader.profit = 0
+                                trader.position_status = PositionStatus.TRADABLE.name
+                                trader.volume = 0
+                                trader.buy_count = 0
+                                trader.last_buy_price = 0
+                                trader.total_cost = 0
+                                trader.avg_price = 0
+                                trader.current_price = 0
+                                trader.last_updated = datetime.now()
+                                update_position(trader)
+                                logger.info(f"Sell {trader.stock} confirmed (DCA)")
+                            elif trader.type == StrategyType.GRID:
+                                # For GRID, calculate profit and update
+                                if tx_request is not None:
+                                    # Determine divisor based on blockchain
+                                    if CONFIG["BLOCKCHAIN"] == "SOLANA":
+                                        divisor = SOL_LAMPORTS
+                                    else:
+                                        divisor = XCH_MOJO
+                                    received_amount = float(tx_request) / divisor
+                                    trader.profit += received_amount - trader.total_cost
+                                trader.position_status = PositionStatus.TRADABLE.name
+                                trader.volume = 0
+                                trader.buy_count = trader.buy_count + 1
+                                trader.last_buy_price = 0
+                                trader.total_cost = 0
+                                trader.avg_price = 0
+                                trader.current_price = 0
+                                trader.last_updated = datetime.now()
+                                update_position(trader)
+                                logger.info(f"Sell {trader.stock} confirmed (GRID), profit: {trader.profit}")
+                        
+                        confirmed_count += 1
+                        break
+                    
+                    # Status 3: Cancelled
+                    elif tx_status == 3:
+                        logger.info(f"Order cancelled for {trader.stock}, side: {'BUY' if is_buy_order else 'SELL'}")
+                        
+                        if is_buy_order:
+                            # Handle BUY cancellation - rollback volume and cost
+                            last_trade = get_last_trade(trader.stock)
+                            if last_trade is None:
+                                logger.warning(f"No last trade found for {trader.stock}, skipping cancellation rollback")
+                            else:
+                                trader.volume -= last_trade[4]  # volume
+                                trader.total_cost -= last_trade[5]  # crypto_cost
+                                if trader.type == StrategyType.DCA:
+                                    trader.buy_count -= 1
+                                
+                                # Delete the trade record
+                                delete_trade(last_trade[0])
+                                logger.info(f"Deleted trade record for cancelled buy order {trader.stock}")
+                                
+                                # Update remaining position
+                                last_trade = get_last_trade(trader.stock)
+                                if last_trade is None or last_trade[2] == 'SELL':
+                                    trader.last_buy_price = 0
+                                    trader.avg_price = 0
+                                    trader.volume = 0
+                                    trader.total_cost = 0
+                                else:
+                                    trader.avg_price = trader.total_cost / trader.volume if trader.volume > 0 else 0
+                                    trader.last_buy_price = last_trade[3]  # price
+                        else:
+                            # Handle SELL cancellation - just delete trade record
+                            last_trade = get_last_trade(trader.stock)
+                            if last_trade is not None:
+                                delete_trade(last_trade[0])
+                                logger.info(f"Deleted trade record for cancelled sell order {trader.stock}")
+                        
+                        trader.position_status = PositionStatus.TRADABLE.name
+                        trader.last_updated = datetime.now()
+                        update_position(trader)
+                        confirmed_count += 1
+                        break
+                
+                except Exception as e:
+                    logger.debug(f"Error processing transaction {tx}: {e}")
+                    continue
+            
+            if not matched:
+                logger.debug(f"No matching transaction found for {trader.stock}, waiting...")
+        
+        logger.info(f"Confirmed {confirmed_count} orders out of {len(pending_traders)} pending orders")
+        return confirmed_count
+        
+    except Exception as e:
+        logger.error(f"Failed to check order confirmation: {e}")
+        return 0
 
 
 @cached(balance_cache)

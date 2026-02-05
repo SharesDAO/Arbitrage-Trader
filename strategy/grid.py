@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, trade, get_token_balance
+from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, check_order_confirmation, trade, get_token_balance
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
@@ -90,7 +90,12 @@ def execute_grid(logger):
 
         # Check if the positions are still pending
         try:
-            check_pending_positions(traders, logger)
+            if CONFIG["BLOCKCHAIN"] == "CHIA":
+                # Use check_order_confirmation for Chia blockchain
+                check_order_confirmation(traders, CONFIG.get("DID_ID"), logger)
+            else:
+                # Use check_pending_positions for other blockchains (e.g., SOLANA)
+                check_pending_positions(traders, logger)
         except Exception as e:
             logger.exception(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
             time.sleep(60)
