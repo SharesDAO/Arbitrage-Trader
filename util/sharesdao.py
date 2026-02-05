@@ -73,7 +73,7 @@ def check_cash_reserve(traders, fund_xch, is_buy, logger):
         raise e
 
 
-def get_user_transactions(did_id, status=1, start_index=0, num_of_transactions=100, sort_by_ascending=False, logger=None):
+def get_user_transactions(did_id, status=1, start_index=0, num_of_transactions=300, sort_by_ascending=False, logger=None):
     """
     Get user transactions from SharesDAO API
     
