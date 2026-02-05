@@ -914,6 +914,121 @@ def check_order_confirmation(traders, did_id, logger):
         return 0
 
 
+def sync_pending_orders(traders, did_id, logger):
+    """
+    Sync local pending orders with exchange transactions.
+    If a local pending order is not found in exchange pending transactions (status 1, 2),
+    mark it as confirmed (assuming it was executed or cancelled).
+    
+    Args:
+        traders: List of trader objects
+        did_id: DID ID in hex format for API authentication
+        logger: Logger instance
+        
+    Returns:
+        Number of synced orders
+    """
+    # Import here to avoid circular import
+    from util.sharesdao import get_user_transactions
+    
+    synced_count = 0
+    
+    try:
+        # Get all pending traders (BUY or SELL)
+        pending_traders = [
+            t for t in traders 
+            if t.position_status in [PositionStatus.PENDING_BUY.name, PositionStatus.PENDING_SELL.name, PositionStatus.PENDING_LIQUIDATION.name]
+        ]
+        
+        if not pending_traders:
+            logger.info("No pending orders to sync")
+            return 0
+        
+        logger.info(f"Syncing {len(pending_traders)} pending orders with exchange")
+        
+        # Fetch pending transactions from exchange (status 1: Pending, 2: Processing)
+        exchange_pending_txs = []
+        for status in [1, 2]:
+            try:
+                transactions = get_user_transactions(
+                    did_id=did_id,
+                    status=status,
+                    start_index=0,
+                    num_of_transactions=200,
+                    sort_by_ascending=False,
+                    logger=logger
+                )
+                exchange_pending_txs.extend(transactions)
+            except Exception as e:
+                logger.warning(f"Failed to fetch transactions with status {status}: {e}")
+                continue
+        
+        logger.info(f"Retrieved {len(exchange_pending_txs)} pending transactions from exchange")
+        
+        # Create a set of matched customer_ids and created_dates from exchange
+        exchange_matches = set()
+        for tx in exchange_pending_txs:
+            tx_customer_id = tx.get("customer_id")
+            tx_created_date = tx.get("created_date")
+            if tx_customer_id and tx_created_date is not None:
+                exchange_matches.add((tx_customer_id, tx_created_date))
+        
+        # Check each local pending order
+        for trader in pending_traders:
+            is_buy_order = trader.position_status == PositionStatus.PENDING_BUY.name
+            trader_timestamp = trader.last_updated.timestamp() if hasattr(trader.last_updated, 'timestamp') else None
+            
+            # Try to find matching transaction in exchange pending transactions
+            found_match = False
+            for tx in exchange_pending_txs:
+                try:
+                    tx_customer_id = tx.get("customer_id")
+                    if tx_customer_id != trader.stock:
+                        continue
+                    
+                    # Check order type
+                    tx_type = tx.get("type")
+                    if tx_type is None:
+                        continue
+                    tx_is_buy = (tx_type % 2 == 1)
+                    if tx_is_buy != is_buy_order:
+                        continue
+                    
+                    # Check created_date
+                    tx_created_date = tx.get("created_date")
+                    if tx_created_date is not None and trader_timestamp:
+                        try:
+                            tx_timestamp = float(tx_created_date)
+                            # Allow small time difference (within 60 seconds) for matching
+                            if abs(tx_timestamp - trader_timestamp) <= 60:
+                                found_match = True
+                                break
+                        except Exception as e:
+                            logger.debug(f"Failed to parse created_date: {e}")
+                    else:
+                        # If no created_date, match by customer_id and type only
+                        found_match = True
+                        break
+                except Exception as e:
+                    logger.debug(f"Error checking transaction: {e}")
+                    continue
+            
+            # If no match found, mark as confirmed
+            if not found_match:
+                logger.info(f"Local pending order {trader.stock} not found in exchange pending transactions, marking as confirmed")
+                trader.position_status = PositionStatus.TRADABLE.name
+                trader.last_updated = datetime.now()
+                update_position(trader)
+                synced_count += 1
+        
+        logger.info(f"Synced {synced_count} orders out of {len(pending_traders)} pending orders")
+        return synced_count
+        
+    except Exception as e:
+        logger.error(f"Failed to sync pending orders: {e}")
+        return 0
+
+
 @cached(balance_cache)
 def get_crypto_balance():
     if CONFIG["BLOCKCHAIN"] == "SOLANA":

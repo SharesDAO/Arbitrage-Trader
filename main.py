@@ -11,7 +11,7 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import check_pending_positions, check_order_confirmation, get_crypto_price, sign_message_by_key
+from util.crypto import check_pending_positions, check_order_confirmation, sync_pending_orders, get_crypto_price, sign_message_by_key
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
 from util.db import update_position
 from util.sharesdao import get_pool_by_id
@@ -206,9 +206,48 @@ def update(xch: str, cat: str, strategy: str):
     # For update command, always use check_pending_positions with file data
     check_pending_positions(traders, logger, update=True)
 
+
+@click.command("sync", help="Sync local pending orders with exchange")
+@click.option(
+    "-s",
+    "--strategy",
+    help="Your trading strategy name, e.g DCA, Grid",
+    type=str,
+    required=True
+)
+def sync(strategy: str):
+    traders = []
+    if strategy.lower() == "dca":
+        load_config(StrategyType.DCA.value)
+        traders = [DCAStockTrader(stock, logger) for stock in CONFIG["TRADING_SYMBOLS"]]
+    elif strategy.lower() == "grid":
+        load_config(StrategyType.GRID.value)
+        for stock in CONFIG["TRADING_SYMBOLS"]:
+            # Create grids for each stock
+            for i in range(stock["GRID_NUM"]):
+                trader = GridStockTrader(i, stock, logger)
+                traders.append(trader)
+    else:
+        logger.error(f"Invalid strategy: {strategy}")
+        return
+    
+    # Only sync for Chia blockchain
+    if CONFIG["BLOCKCHAIN"] != "CHIA":
+        logger.warning(f"Sync command only works for CHIA blockchain, current: {CONFIG['BLOCKCHAIN']}")
+        return
+    
+    did_id = CONFIG.get("DID_ID")
+    if not did_id:
+        logger.error("DID_ID not found in CONFIG")
+        return
+    
+    synced_count = sync_pending_orders(traders, did_id, logger)
+    print(f"Synced {synced_count} pending orders")
+
 cli.add_command(run)
 cli.add_command(liquidate)
 cli.add_command(reset)
 cli.add_command(update)
+cli.add_command(sync)
 if __name__ == "__main__":
     cli()
