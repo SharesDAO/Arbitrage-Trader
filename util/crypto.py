@@ -28,7 +28,6 @@ from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType
 from util.db import update_position, get_last_trade, delete_trade
 from util.stock import STOCKS
-from util.sharesdao import get_user_transactions
 
 coin_cache = TTLCache(maxsize=100, ttl=600)
 price_cache = TTLCache(maxsize=100, ttl=30)
@@ -689,6 +688,9 @@ def check_order_confirmation(traders, did_id, logger):
     Returns:
         Number of confirmed orders
     """
+    # Import here to avoid circular import
+    from util.sharesdao import get_user_transactions
+    
     confirmed_count = 0
     
     # Define constants
