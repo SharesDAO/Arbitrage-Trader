@@ -1207,9 +1207,7 @@ def sign_message_by_wallet(did, message):
 def sign_message_by_key(message):
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
         private_key = Keypair.from_bytes(bytes.fromhex(os.environ.get("DID_PRIVATE_KEY", "")))
-        signature = private_key.sign_message(message.encode("utf-8"))
-        # Convert signature to Base58 string (Solana standard format)
-        return str(signature)
+        return private_key.sign_message(message.encode("utf-8")).to_bytes().hex()
     if CONFIG["BLOCKCHAIN"] == "CHIA":
         private_key = PrivateKey.from_bytes(bytes.fromhex(os.environ["DID_PRIVATE_KEY"]))
         synthetic_secret_key = calculate_synthetic_secret_key(private_key, DEFAULT_HIDDEN_PUZZLE_HASH)
