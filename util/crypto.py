@@ -730,6 +730,9 @@ def check_order_confirmation(traders, did_id, logger):
         logger.info(f"Retrieved {len(all_transactions)} transactions from exchange")
         
         # Match each pending trader with exchange transactions
+        order_time_offset = CONFIG.get("MAX_ORDER_TIME_OFFSET", 120)
+        # Fallback tolerance for local-vs-UTC drift in legacy pending records.
+        timezone_tolerance = CONFIG.get("ORDER_TIME_TZ_TOLERANCE", 8 * 60 * 60)
         for trader in pending_traders:
             matched = False
             is_buy_order = trader.position_status == PositionStatus.PENDING_BUY.name
@@ -770,15 +773,39 @@ def check_order_confirmation(traders, did_id, logger):
                         # created_date is an int timestamp (seconds since epoch)
                         try:
                             tx_timestamp = float(tx_created_date)
-                            
-                            # Allow small time difference (within 60 seconds) for matching
-                            if trader_timestamp and abs(tx_timestamp - trader_timestamp) > 60:
-                                continue
+                            if trader_timestamp:
+                                time_diff = abs(tx_timestamp - trader_timestamp)
+                                if trader.type == StrategyType.GRID and not is_buy_order:
+                                    # Grid sell orders can be affected by timezone drift in last_updated.
+                                    if time_diff > max(order_time_offset, timezone_tolerance):
+                                        continue
+                                elif time_diff > order_time_offset:
+                                    continue
                         except Exception as e:
                             logger.debug(f"Failed to parse created_date for transaction {tx}: {e}")
                             # If date parsing fails, still try to match by customer_id only
                             pass
                     
+                    # For GRID sell, validate offer amount to avoid false-positive matches.
+                    if trader.type == StrategyType.GRID and not is_buy_order:
+                        tx_offer = tx.get("offer")
+                        if tx_offer is None:
+                            continue
+                        try:
+                            tx_offer_raw = float(tx_offer)
+                            expected_volume = float(trader.volume)
+                            if expected_volume > 0:
+                                offer_candidates = [tx_offer_raw, tx_offer_raw / CAT_MOJO]
+                                min_relative_error = min(
+                                    abs(candidate - expected_volume) / expected_volume
+                                    for candidate in offer_candidates
+                                )
+                                if min_relative_error > 0.005:
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"Failed to validate offer amount for transaction {tx}: {e}")
+                            continue
+
                     # Found a match, check status
                     tx_status = tx.get("status")
                     if tx_status is None:
