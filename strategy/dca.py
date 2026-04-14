@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.crypto import get_crypto_price, send_asset, get_crypto_balance, add_token, check_pending_positions, get_token_balance
+from util.crypto import get_crypto_price, send_asset, get_crypto_balance, add_token, check_pending_positions, check_order_confirmation, sync_pending_orders, get_token_balance
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
@@ -131,9 +131,17 @@ def execute_dca(logger):
 
         # Check if the positions are still pending
         try:
+            check_order_confirmation(traders, logger)
+        except Exception as e:
+            logger.error(f"Failed to check order confirmation via API: {e}")
+        try:
             check_pending_positions(traders, logger)
         except Exception as e:
             logger.error(f"Failed to check pending positions, please check your {CONFIG['CURRENCY']} wallet. {e}")
+        try:
+            sync_pending_orders(traders, logger)
+        except Exception as e:
+            logger.error(f"Failed to sync pending orders via API: {e}")
         stock_balance = 0
         for trader in traders:
             current_buy_price, current_sell_price = get_stock_price(trader.stock, logger)

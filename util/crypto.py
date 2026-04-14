@@ -448,6 +448,19 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
             all_token_txs = pre_fetched_token_txs
             logger.info(f"Using pre-fetched transactions: {sum(len(txs) for txs in all_token_txs.values())} ERC20 token txs.")
         else:
+            # If any EVM positions have been PENDING beyond MAX_ORDER_TIME_OFFSET,
+            # clear the block cache to force a full 24h scan and catch delayed confirmations.
+            stale_pending_statuses = {PositionStatus.PENDING_BUY.name, PositionStatus.PENDING_SELL.name, PositionStatus.PENDING_LIQUIDATION.name}
+            has_stale_pending = any(
+                t.position_status in stale_pending_statuses and
+                (datetime.now() - t.last_updated).total_seconds() > CONFIG["MAX_ORDER_TIME_OFFSET"]
+                for t in traders
+            )
+            if has_stale_pending:
+                chain_key = f"{CONFIG.get('EVM_CHAIN', '').lower()}_{CONFIG.get('ADDRESS', '').lower()}"
+                if chain_key in last_checked_block:
+                    logger.info("Stale PENDING positions detected — forcing 24h block scan to find delayed confirmations")
+                    del last_checked_block[chain_key]
             # Fetch transactions normally
             all_token_txs = get_erc20_token_txs(logger)
             logger.info(f"Fetched {sum(len(txs) for txs in all_token_txs.values())} ERC20 token txs.")
@@ -743,6 +756,217 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                             logger.error(f"Failed to confirm {trader.stock}: {e}")
                             continue
     return False
+
+
+def check_order_confirmation(traders, logger):
+    """
+    Check pending orders against the SharesDAO API (statuses 3=Cancelled, 4=Executed).
+    This is the primary source of truth for order outcomes — avoids relying on
+    blockchain transaction scanning which is unreliable on chains like BSC.
+
+    Matches by customer_id, order side (derived from type % 2), and created_date
+    within MAX_ORDER_TIME_OFFSET of trader.last_updated.
+    """
+    from util.sharesdao import get_user_transactions
+
+    pending_traders = [
+        t for t in traders
+        if t.position_status in [PositionStatus.PENDING_BUY.name, PositionStatus.PENDING_SELL.name,
+                                  PositionStatus.PENDING_LIQUIDATION.name]
+    ]
+    if not pending_traders:
+        return 0
+
+    logger.info(f"Checking {len(pending_traders)} pending orders against SharesDAO API")
+
+    all_transactions = []
+    for status in [3, 4]:
+        try:
+            txs = get_user_transactions(status=status, num_of_transactions=200, logger=logger)
+            all_transactions.extend(txs)
+        except Exception as e:
+            logger.warning(f"Failed to fetch API transactions (status={status}): {e}")
+
+    order_time_offset = CONFIG.get("MAX_ORDER_TIME_OFFSET", 600)
+    confirmed_count = 0
+
+    for trader in pending_traders:
+        is_buy_order = trader.position_status == PositionStatus.PENDING_BUY.name
+        trader_timestamp = trader.last_updated.timestamp()
+
+        for tx in all_transactions:
+            try:
+                if tx.get("customer_id") != trader.stock:
+                    continue
+
+                tx_type = tx.get("type")
+                if tx_type is None:
+                    continue
+                # type % 2 == 1 means BUY, otherwise SELL
+                if (tx_type % 2 == 1) != is_buy_order:
+                    continue
+
+                tx_created = tx.get("created_date")
+                if tx_created is not None:
+                    if abs(float(tx_created) - trader_timestamp) > order_time_offset:
+                        continue
+
+                tx_status = tx.get("status")
+                tx_request = tx.get("request")
+
+                if tx_status == 4:  # Executed
+                    if is_buy_order:
+                        if trader.type == StrategyType.DCA:
+                            token_balance = get_token_balance()
+                            asset_id = STOCKS[trader.ticker]["asset_id"]
+                            if CONFIG["BLOCKCHAIN"] == "EVM":
+                                asset_id = asset_id.lower()
+                            if asset_id in token_balance:
+                                trader.volume = token_balance[asset_id]["balance"]
+                        elif trader.type == StrategyType.GRID and tx_request is not None:
+                            if CONFIG["BLOCKCHAIN"] == "EVM":
+                                trader.volume = float(tx_request) / 10 ** 18  # stock tokens use 18 decimals
+                            elif CONFIG["BLOCKCHAIN"] == "SOLANA":
+                                trader.volume = float(tx_request) / SOLANA_DECIAML
+                            else:
+                                trader.volume = float(tx_request) / CAT_MOJO
+                        trader.position_status = PositionStatus.TRADABLE.name
+                        trader.last_updated = datetime.now()
+                        update_position(trader)
+                        logger.info(f"Buy {trader.stock} confirmed (API)")
+                    else:
+                        if trader.type == StrategyType.DCA:
+                            trader.profit = 0
+                            trader.volume = 0
+                            trader.buy_count = 0
+                            trader.last_buy_price = 0
+                            trader.total_cost = 0
+                            trader.avg_price = 0
+                            trader.current_price = 0
+                        elif trader.type == StrategyType.GRID and tx_request is not None:
+                            if CONFIG["BLOCKCHAIN"] == "EVM":
+                                received = float(tx_request) / 10 ** CONFIG.get("USDC_DECIMALS", 6)
+                            elif CONFIG["BLOCKCHAIN"] == "SOLANA":
+                                received = float(tx_request) / SOLANA_DECIAML
+                            else:
+                                received = float(tx_request) / XCH_MOJO
+                            trader.profit += received - trader.total_cost
+                            trader.volume = 0
+                            trader.buy_count += 1
+                            trader.last_buy_price = 0
+                            trader.total_cost = 0
+                            trader.avg_price = 0
+                            trader.current_price = 0
+                        trader.position_status = PositionStatus.TRADABLE.name
+                        trader.last_updated = datetime.now()
+                        update_position(trader)
+                        logger.info(f"Sell {trader.stock} confirmed (API)")
+                    confirmed_count += 1
+                    break
+
+                elif tx_status == 3:  # Cancelled
+                    if is_buy_order:
+                        last_trade = get_last_trade(trader.stock)
+                        if last_trade:
+                            trader.volume -= last_trade[4]
+                            trader.total_cost -= last_trade[5]
+                            if trader.type == StrategyType.DCA:
+                                trader.buy_count -= 1
+                            trader.last_updated = datetime.now()
+                            update_position(trader)
+                            delete_trade(last_trade[0])
+                            last_trade = get_last_trade(trader.stock)
+                            if last_trade is None or last_trade[2] == 'SELL':
+                                trader.last_buy_price = 0
+                                trader.avg_price = 0
+                                trader.volume = 0
+                                trader.total_cost = 0
+                            else:
+                                trader.avg_price = trader.total_cost / trader.volume if trader.volume > 0 else 0
+                                trader.last_buy_price = last_trade[3]
+                    else:
+                        last_trade = get_last_trade(trader.stock)
+                        if last_trade:
+                            delete_trade(last_trade[0])
+                    trader.position_status = PositionStatus.TRADABLE.name
+                    trader.last_updated = datetime.now()
+                    update_position(trader)
+                    logger.info(f"Order {trader.stock} cancelled (API)")
+                    confirmed_count += 1
+                    break
+
+            except Exception as e:
+                logger.debug(f"Error processing API transaction for {trader.stock}: {e}")
+                continue
+
+    logger.info(f"API confirmed/cancelled {confirmed_count}/{len(pending_traders)} pending orders")
+    return confirmed_count
+
+
+def sync_pending_orders(traders, logger):
+    """
+    Safety net: if a local PENDING order no longer appears in the exchange's pending
+    list (status 1=Pending, 2=Processing), it was already executed or cancelled but
+    wasn't caught by check_order_confirmation. Reset such positions to TRADABLE so
+    the bot can recheck and retry if needed.
+    """
+    from util.sharesdao import get_user_transactions
+
+    pending_traders = [
+        t for t in traders
+        if t.position_status in [PositionStatus.PENDING_BUY.name, PositionStatus.PENDING_SELL.name,
+                                  PositionStatus.PENDING_LIQUIDATION.name]
+    ]
+    if not pending_traders:
+        return 0
+
+    logger.info(f"Syncing {len(pending_traders)} pending orders with SharesDAO pending list")
+
+    exchange_pending = []
+    for status in [1, 2]:
+        try:
+            txs = get_user_transactions(status=status, num_of_transactions=200, logger=logger)
+            exchange_pending.extend(txs)
+        except Exception as e:
+            logger.warning(f"Failed to fetch pending transactions (status={status}): {e}")
+            # If the API call fails, abort — don't falsely reset orders
+            return 0
+
+    synced_count = 0
+    for trader in pending_traders:
+        is_buy_order = trader.position_status == PositionStatus.PENDING_BUY.name
+        trader_timestamp = trader.last_updated.timestamp()
+        found = False
+
+        for tx in exchange_pending:
+            try:
+                if tx.get("customer_id") != trader.stock:
+                    continue
+                tx_type = tx.get("type")
+                if tx_type is None:
+                    continue
+                if (tx_type % 2 == 1) != is_buy_order:
+                    continue
+                tx_created = tx.get("created_date")
+                if tx_created is not None:
+                    if abs(float(tx_created) - trader_timestamp) <= 60:
+                        found = True
+                        break
+                else:
+                    found = True
+                    break
+            except Exception as e:
+                logger.debug(f"Error checking pending tx for {trader.stock}: {e}")
+
+        if not found:
+            logger.info(f"{trader.stock} ({trader.position_status}) not in exchange pending list — resetting to TRADABLE")
+            trader.position_status = PositionStatus.TRADABLE.name
+            trader.last_updated = datetime.now()
+            update_position(trader)
+            synced_count += 1
+
+    logger.info(f"Synced {synced_count}/{len(pending_traders)} stale pending orders")
+    return synced_count
 
 
 def get_crypto_balance():
@@ -1085,6 +1309,17 @@ def get_web3():
 
 def get_gas_params(w3):
     """Get gas parameters for EVM transaction (supports both legacy and EIP-1559)"""
+    evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
+    # BSC exposes baseFeePerGas via BEP-95 but its value is near-zero, so the EIP-1559
+    # formula yields ~2 gwei — below the 3 gwei minimum enforced by BSC validators.
+    # Force legacy gas pricing for BSC with a hard 3 gwei floor to avoid stuck txs.
+    if evm_chain == "bsc":
+        try:
+            gas_price = w3.eth.gas_price
+            gas_price = int(max(gas_price * 1.2, w3.to_wei(3, 'gwei')))
+        except Exception:
+            gas_price = w3.to_wei(3, 'gwei')
+        return {'gasPrice': gas_price}
     try:
         # Try to get latest block to check if EIP-1559 is supported
         latest_block = w3.eth.get_block('latest')
