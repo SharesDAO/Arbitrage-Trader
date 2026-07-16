@@ -100,16 +100,21 @@ def execute_dca(logger):
             time.sleep(60)
             continue
 
-        # Check if the positions are still pending
+        # Reconcile pending orders against both the exchange API and the wallet.
+        # The API is the source of truth for executed/cancelled order status, while
+        # the wallet check remains a fallback for delayed transaction discovery.
         try:
-            if CONFIG["BLOCKCHAIN"] == "CHIA":
-                # Use check_order_confirmation for Chia blockchain
-                check_order_confirmation(traders, CONFIG.get("DID_ID"), logger)
-            else:
-                # Use check_pending_positions for other blockchains (e.g., SOLANA)
-                check_pending_positions(traders, logger)
+            check_order_confirmation(traders, CONFIG.get("DID_ID"), logger)
+        except Exception as e:
+            logger.error(f"Failed to check order confirmation via API: {e}")
+        try:
+            check_pending_positions(traders, logger)
         except Exception as e:
             logger.error(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
+        try:
+            sync_pending_orders(traders, CONFIG.get("DID_ID"), logger)
+        except Exception as e:
+            logger.error(f"Failed to sync pending orders via API: {e}")
         stock_balance = 0
         for trader in traders:
             current_buy_price, current_sell_price = get_stock_price(trader.stock, logger)

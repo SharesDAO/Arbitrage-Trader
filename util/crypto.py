@@ -988,17 +988,12 @@ def sync_pending_orders(traders, did_id, logger):
                 exchange_pending_txs.extend(transactions)
             except Exception as e:
                 logger.warning(f"Failed to fetch transactions with status {status}: {e}")
-                continue
+                # An incomplete pending-order list is unsafe: an order omitted by
+                # the failed request would otherwise be reset to TRADABLE and may
+                # be submitted a second time.
+                return 0
         
         logger.info(f"Retrieved {len(exchange_pending_txs)} pending transactions from exchange")
-        
-        # Create a set of matched customer_ids and created_dates from exchange
-        exchange_matches = set()
-        for tx in exchange_pending_txs:
-            tx_customer_id = tx.get("customer_id")
-            tx_created_date = tx.get("created_date")
-            if tx_customer_id and tx_created_date is not None:
-                exchange_matches.add((tx_customer_id, tx_created_date))
         
         # Check each local pending order
         for trader in pending_traders:

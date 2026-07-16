@@ -88,18 +88,21 @@ def execute_grid(logger):
         stocks_stats = {}
         stock_balance = 0
 
-        # Check if the positions are still pending
+        # Reconcile pending orders against both the exchange API and the wallet.
+        # The API is the source of truth for executed/cancelled order status, while
+        # the wallet check remains a fallback for delayed transaction discovery.
         try:
-            if CONFIG["BLOCKCHAIN"] == "CHIA":
-                # Use check_order_confirmation for Chia blockchain
-                check_order_confirmation(traders, CONFIG.get("DID_ID"), logger)
-            else:
-                # Use check_pending_positions for other blockchains (e.g., SOLANA)
-                check_pending_positions(traders, logger)
+            check_order_confirmation(traders, CONFIG.get("DID_ID"), logger)
         except Exception as e:
-            logger.exception(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
-            time.sleep(60)
-            continue
+            logger.error(f"Failed to check order confirmation via API: {e}")
+        try:
+            check_pending_positions(traders, logger)
+        except Exception as e:
+            logger.error(f"Failed to check pending positions, please check your {CONFIG['BLOCKCHAIN']} wallet: {e}")
+        try:
+            sync_pending_orders(traders, CONFIG.get("DID_ID"), logger)
+        except Exception as e:
+            logger.error(f"Failed to sync pending orders via API: {e}")
         if fund_crypto == 0:
             fund_crypto = get_fund_value(logger) / get_crypto_price(logger)
         logger.info(f"Fund value: {fund_crypto} {CONFIG['CURRENCY']}")
