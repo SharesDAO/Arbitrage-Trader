@@ -1178,6 +1178,40 @@ def get_token_balance():
             return None
 
 
+def get_live_stock_balance(ticker, logger):
+    """Return the current Solana wallet balance for one stock token.
+
+    This deliberately bypasses ``token_cache`` so destructive operations such as
+    liquidation always use a fresh balance from the configured Solana RPC
+    endpoint (Alchemy in production).
+    """
+    if CONFIG.get("BLOCKCHAIN") != "SOLANA":
+        raise ValueError("Live stock balance liquidation is only supported on Solana")
+    if ticker not in STOCKS or not STOCKS[ticker].get("asset_id"):
+        raise ValueError(f"Unknown stock ticker: {ticker}")
+
+    token_mint = STOCKS[ticker]["asset_id"]
+    try:
+        response = call_solana_rpc("getTokenAccountsByOwner", [
+            CONFIG["ADDRESS"],
+            {"mint": token_mint},
+            {"encoding": "jsonParsed"}
+        ])
+        accounts = response.get("result", {}).get("value", [])
+        balance = 0.0
+        for account in accounts:
+            token_amount = account["account"]["data"]["parsed"]["info"]["tokenAmount"]
+            raw_amount = int(token_amount["amount"])
+            decimals = int(token_amount["decimals"])
+            balance += raw_amount / (10 ** decimals)
+
+        logger.info(f"Fetched live {ticker} balance from Solana RPC: {balance}")
+        return balance
+    except Exception as e:
+        logger.error(f"Failed to fetch live {ticker} balance from Solana RPC: {e}")
+        return None
+
+
 def add_token(symbol):
     pass
 

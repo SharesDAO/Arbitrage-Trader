@@ -11,9 +11,9 @@ import requests
 from stock_trader import StockTrader
 from strategy.dca import DCAStockTrader, execute_dca
 from strategy.grid import execute_grid, GridStockTrader
-from util.crypto import check_pending_positions, check_order_confirmation, sync_pending_orders, get_crypto_price, sign_message_by_key
+from util.crypto import check_pending_positions, check_order_confirmation, sync_pending_orders, get_crypto_price, get_live_stock_balance, sign_message_by_key, trade
 from constants.constant import CONFIG, REQUEST_TIMEOUT, StrategyType, PositionStatus
-from util.db import update_position
+from util.db import delete_stock_data, update_position
 from util.sharesdao import get_pool_by_id
 from util.stock import STOCKS, get_stock_price, get_pool_list
 
@@ -81,7 +81,7 @@ def run(strategy: str):
         execute_grid(logger)
 
 
-@click.command("liquid", help="Liquidates a stock")
+@click.command("liquid", help="Sells the full live Solana balance in one market order and clears its local data")
 @click.option(
     "-t",
     "--ticker",
@@ -98,28 +98,39 @@ def run(strategy: str):
 )
 def liquidate(ticker: str, strategy: str):
     load_config(strategy.upper())
-    if strategy.lower() == "dca":
-        stock = DCAStockTrader(ticker, logger)
-        if stock.volume >= 0:
-            xch_price = get_crypto_price(logger)
-            stock_price = get_stock_price(stock.stock, logger)[0]
-            stock.sell_stock(xch_price, stock_price, True)
-            update_position(stock)
-            print(
-                f"Successfully liquidated the stock {stock.stock},  volume {stock.volume}, price {stock.current_price}, total profit {stock.profit}")
-    if strategy.lower() == "grid":
-        for stock in CONFIG["TRADING_SYMBOLS"]:
-            if stock["TICKER"] == ticker:
-                xch_price = get_crypto_price(logger)
-                stock_price = get_stock_price(ticker, logger)[0]
-                for i in range(stock["GRID_NUM"]):
-                    grid = GridStockTrader(i, stock, logger)
-                    if grid.volume >= 0:
-                        grid.sell_stock(xch_price, stock_price, True)
-                        print(
-                            f"Successfully liquidated the stock {grid.stock},  volume {grid.volume}, price {grid.current_price}, profit {grid.profit}")
-                        update_position(grid)
-                break
+    ticker = ticker.upper()
+    if CONFIG["BLOCKCHAIN"] != "SOLANA":
+        raise click.ClickException("Live-balance liquidation currently supports Solana funds only")
+    if ticker not in STOCKS:
+        raise click.ClickException(f"Unknown stock ticker: {ticker}")
+
+    volume = get_live_stock_balance(ticker, logger)
+    if volume is None:
+        raise click.ClickException("Could not fetch the live token balance; no order was submitted and no data was deleted")
+
+    if volume <= 0:
+        deleted = delete_stock_data(ticker)
+        click.echo(
+            f"Live {ticker} balance is zero. Deleted {deleted['positions']} positions "
+            f"and {deleted['trades']} trades from the database."
+        )
+        return
+
+    crypto_price = get_crypto_price(logger)
+    stock_price = get_stock_price(ticker, logger)[0]
+    if not crypto_price or not stock_price:
+        raise click.ClickException("Could not fetch market prices; no order was submitted and no data was deleted")
+
+    request_crypto = volume * stock_price / crypto_price
+    customer_id = f"{ticker}-Liquidation"
+    if not trade(ticker, "SELL", request_crypto, volume, logger, customer_id, "MARKET"):
+        raise click.ClickException("Market sell was rejected; no data was deleted")
+
+    deleted = delete_stock_data(ticker)
+    click.echo(
+        f"Submitted one market sell for all {volume} shares of {ticker}. "
+        f"Deleted {deleted['positions']} positions and {deleted['trades']} trades from the database."
+    )
 
 
 @click.command("reset", help="Reset a stock position")

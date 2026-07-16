@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from stock_trader import StockTrader
-from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, check_order_confirmation, trade
+from util.crypto import get_crypto_price, get_crypto_balance, add_token, check_pending_positions, check_order_confirmation, sync_pending_orders, trade
 from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade, get_last_trade
