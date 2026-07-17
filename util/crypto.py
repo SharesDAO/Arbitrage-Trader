@@ -47,6 +47,23 @@ HEADERS = {
 }
 MAX_RETRIES = 3
 
+
+def _solana_rpc_with_retry(callback, logger, operation):
+    """Run one Solana RPC call with bounded exponential backoff."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return callback()
+        except Exception as e:
+            if attempt == MAX_RETRIES:
+                raise
+            delay = 2 ** (attempt - 1)
+            logger.warning(
+                f"Solana RPC {operation} failed on attempt {attempt}/{MAX_RETRIES} "
+                f"({type(e).__name__}: {e!r}); retrying in {delay}s"
+            )
+            time.sleep(delay)
+
+
 def extract_timestamp_from_order_id(order_id: str) -> float:
     """
     Extract timestamp from order_id string.
@@ -251,24 +268,31 @@ def get_sol_txs(logger):
         client = Client(SOLANA_URL)
         last_tx = None if "SOL" not in last_checked_tx else last_checked_tx["SOL"]
         # Get recent confirmed signatures for transactions involving this wallet
-        response = client.get_signatures_for_address(
-            Pubkey.from_string(CONFIG['ADDRESS']),
-            limit=50,
-            until=last_tx,
-            commitment=Commitment("confirmed")
+        response = _solana_rpc_with_retry(
+            lambda: client.get_signatures_for_address(
+                Pubkey.from_string(CONFIG['ADDRESS']),
+                limit=50,
+                until=last_tx,
+                commitment=Commitment("confirmed")
+            ),
+            logger,
+            "getSignaturesForAddress(SOL)"
         )
         
         if not response.value:
             return []
-        last_checked_tx["SOL"] = response.value[0].signature
         transactions = []
         
         # For each signature, get the full transaction details
         for sig_info in response.value:
-            tx_response = client.get_transaction(
-                sig_info.signature,
-                commitment=Commitment("confirmed"),
-                max_supported_transaction_version=0
+            tx_response = _solana_rpc_with_retry(
+                lambda signature=sig_info.signature: client.get_transaction(
+                    signature,
+                    commitment=Commitment("confirmed"),
+                    max_supported_transaction_version=0
+                ),
+                logger,
+                f"getTransaction({sig_info.signature})"
             )
             
             if not tx_response.value:
@@ -315,10 +339,13 @@ def get_sol_txs(logger):
                     else:
                         tx["sent"] = 0
                     transactions.append(tx)
+        # Advance the cursor only after the entire batch has been processed. A
+        # failed batch will therefore be retried instead of being silently lost.
+        last_checked_tx["SOL"] = response.value[0].signature
         logger.info(f"Found {len(transactions)} SOL transactions")
         return transactions
     except Exception as e:
-        print(f"Failed to get SOL transactions: {str(e)}")
+        logger.exception(f"Failed to get SOL transactions ({type(e).__name__}): {e!r}")
         return []
 
 
@@ -355,33 +382,45 @@ def get_cat_txs():
     return cat_txs
 
 
-def get_spl_token_txs(logger):
+def get_spl_token_txs(logger, token_mints=None):
     try:
         client = Client(SOLANA_URL)
         token_txs = {}
-        # For each token in the balance, get its transactions
-        for stock in CONFIG["TRADING_SYMBOLS"]:
-            token_mint = STOCKS[stock["TICKER"]]["asset_id"]
+        if token_mints is None:
+            token_mints = set()
+            for stock in CONFIG["TRADING_SYMBOLS"]:
+                ticker = stock if isinstance(stock, str) else stock["TICKER"]
+                token_mints.add(STOCKS[ticker]["asset_id"])
+
+        # Only query tokens that can resolve a currently pending position.
+        for token_mint in token_mints:
             token_txs[token_mint] = []
             account_pubkey = get_associated_token_address(Pubkey.from_string(CONFIG['ADDRESS']), Pubkey.from_string(token_mint))
             last_tx = None if token_mint not in last_checked_tx else last_checked_tx[token_mint]
             # Get transaction signatures for this token account
-            sigs_response = client.get_signatures_for_address(
-                account_pubkey,
-                limit=50,
-                until=last_tx,
-                commitment=Commitment("confirmed")
+            sigs_response = _solana_rpc_with_retry(
+                lambda account=account_pubkey, cursor=last_tx: client.get_signatures_for_address(
+                    account,
+                    limit=50,
+                    until=cursor,
+                    commitment=Commitment("confirmed")
+                ),
+                logger,
+                f"getSignaturesForAddress({token_mint})"
             )
 
             if not sigs_response.value:
                 continue
-            last_checked_tx[token_mint] = sigs_response.value[0].signature
             # Process each transaction
             for sig_info in sigs_response.value:
-                tx_response = client.get_transaction(
-                    sig_info.signature,
-                    commitment=Commitment("confirmed"),
-                    max_supported_transaction_version=0
+                tx_response = _solana_rpc_with_retry(
+                    lambda signature=sig_info.signature: client.get_transaction(
+                        signature,
+                        commitment=Commitment("confirmed"),
+                        max_supported_transaction_version=0
+                    ),
+                    logger,
+                    f"getTransaction({sig_info.signature})"
                 )
 
                 if not tx_response.value:
@@ -426,14 +465,25 @@ def get_spl_token_txs(logger):
                         else:
                             tx["sent"] = 0
                         token_txs[token_mint].append(tx)
+            last_checked_tx[token_mint] = sigs_response.value[0].signature
         logger.info(f"Found {len(token_txs)} SPL token transactions")
         return token_txs
     except Exception as e:
-        logger.error(f"Failed to get SPL token transactions: {str(e)}")
+        logger.exception(f"Failed to get SPL token transactions ({type(e).__name__}): {e!r}")
         return {}
 
 
 def check_pending_positions(traders, logger, update: bool = False):
+    pending_statuses = {
+        PositionStatus.PENDING_BUY.name,
+        PositionStatus.PENDING_SELL.name,
+        PositionStatus.PENDING_LIQUIDATION.name,
+    }
+    pending_traders = [t for t in traders if t.position_status in pending_statuses]
+    if not pending_traders:
+        logger.debug("No pending positions; skipping wallet transaction scan")
+        return False
+
     token_balance = get_token_balance()
     
     # Define constants at function start
@@ -441,8 +491,9 @@ def check_pending_positions(traders, logger, update: bool = False):
     
     # Get transactions based on blockchain type
     if CONFIG["BLOCKCHAIN"] == "SOLANA":
+        pending_mints = {STOCKS[t.ticker]["asset_id"] for t in pending_traders}
         crypto_txs = get_sol_txs(logger)
-        all_token_txs = get_spl_token_txs(logger)
+        all_token_txs = get_spl_token_txs(logger, pending_mints)
         logger.info(f"Fetched {len(crypto_txs)} SOL txs,  {len(all_token_txs)} SPL tokens")
         token_divisor = 1_000_000_000
     elif CONFIG["BLOCKCHAIN"] == "CHIA" and update:
@@ -460,7 +511,7 @@ def check_pending_positions(traders, logger, update: bool = False):
         logger.warning(f"Unsupported blockchain type: {CONFIG['BLOCKCHAIN']}")
         return False
     
-    for trader in traders:
+    for trader in pending_traders:
         confirmed = False
         logger.info(f"Checking {trader.stock}, status: {trader.position_status}")
         if trader.position_status == PositionStatus.PENDING_BUY.name:

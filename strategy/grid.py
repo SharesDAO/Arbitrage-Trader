@@ -108,6 +108,7 @@ def execute_grid(logger):
         logger.info(f"Fund value: {fund_crypto} {CONFIG['CURRENCY']}")
         if fund_crypto == 0:
             logger.error("Failed to get fund value, skipping...")
+            time.sleep(60)
             continue
         crypto_balance = get_crypto_balance()
         for trader in traders:
@@ -166,10 +167,12 @@ def execute_grid(logger):
         crypto_balance = get_crypto_balance()
         if crypto_balance is None:
             logger.error(f"Failed to get {CONFIG['CURRENCY']} balance, skipping...")
+            time.sleep(60)
             continue
         crypto_price = get_crypto_price(logger)
         if crypto_price is None:
             logger.error(f"Failed to get {CONFIG['CURRENCY']} price, skipping...")
+            time.sleep(60)
             continue
         total_profit = 0
         token_balance = get_token_balance()
