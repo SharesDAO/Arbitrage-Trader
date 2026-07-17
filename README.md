@@ -25,7 +25,9 @@ Just checkout the latest code from Github or download the zip file and unzip to 
 2. Restart your trading bot after saved the strategy.
 
 # How to manually liquidate a stock
-Run: `python main.py liquid -w <YOUR_CHIA_WALLET_FINGERPRINT> -d <YOUR_DID_IN_HEX> -t <Stock Ticker(e.g. GOOGL)> -s [DCA|Grid]`
+For a Solana fund, stop the bot and run: `python3 main.py liquid -t <Stock Ticker(e.g. GOOGL)> -s [DCA|Grid]`
+
+The command fetches the stock's live SPL-token balance through `SOLANA_RPC_URL`, submits one market sell for the full balance, and then deletes all DCA/Grid positions and trades for that ticker. In production, set `SOLANA_RPC_URL` to the Alchemy Solana endpoint.
 
 # How to correct my positions
 Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME> -w <YOUR_CHIA_WALLET_FINGERPRINT> -s [DCA|Grid]`

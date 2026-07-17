@@ -183,6 +183,10 @@ def fetch_cat_txs():
 
 def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
     now = calendar.timegm(time.gmtime())
+    if ticker not in STOCKS or not STOCKS[ticker].get("asset_id"):
+        logger.error(f"Failed to trade {ticker}: token address not found")
+        return False
+
     inputs = {
         "timestamp": now,
         "signature": "signature",
@@ -193,6 +197,9 @@ def trade(ticker, side, request, offer,logger, customer_id, order_type="LIMIT"):
             "offer": offer,
             "type": order_type,
             "customer_id": customer_id,
+            "token_address": STOCKS[ticker]["asset_id"],
+            "trade_source": "SVIM",
+            "currency": "SOL",
         },
     }
     try:
