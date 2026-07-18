@@ -20,7 +20,7 @@ class DCAStockTrader(StockTrader):
         self.logger.info(f"Loaded position for {self.stock}: {result}")
         if result:
             date_format = "%Y-%m-%d %H:%M:%S"
-            self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated = result
+            self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated, self.pending_customer_id = result
             self.last_updated = datetime.strptime(self.last_updated.split(".")[0], date_format)
         else:
             create_position(self)
@@ -31,7 +31,8 @@ class DCAStockTrader(StockTrader):
             return
         volume = xch_volume * xch_price / stock_price
         timestamp = datetime.now()
-        if not trade(self.stock, "BUY", volume, xch_volume, self.logger, self.stock+"-DCA"):
+        customer_id = trade(self.stock, "BUY", volume, xch_volume, self.logger, self.stock+"-DCA")
+        if not customer_id:
             # Failed to send order
             return
         self.volume += volume
@@ -41,9 +42,11 @@ class DCAStockTrader(StockTrader):
         self.current_price = stock_price
         self.profit = self.volume * self.current_price / xch_price / self.total_cost - 1
         self.position_status = PositionStatus.PENDING_BUY.name
+        self.pending_customer_id = customer_id
         self.buy_count += 1
         self.last_updated = timestamp
-        record_trade(self.stock, "BUY", stock_price, volume, xch_volume, 0)
+        record_trade(self.stock, "BUY", stock_price, volume, xch_volume, 0, customer_id)
+        update_position(self)
         self.logger.info(f"Buying {volume} shares of {self.stock} at ${stock_price}")
 
     def sell_stock(self, xch_price, stock_price, liquid=False):
@@ -52,15 +55,18 @@ class DCAStockTrader(StockTrader):
         self.profit = request_xch / self.total_cost - 1
         if self.profit >= CONFIG["MIN_PROFIT"] or liquid:
             timestamp = datetime.now()
-            if not trade(self.stock, self.wallet_id, request_xch,
-                              self.volume, self.logger, self.stock+"-DCA", "MARKET" if liquid else "LIMIT"):
+            customer_id = trade(self.stock, "SELL", request_xch,
+                                self.volume, self.logger, self.stock+"-DCA", "MARKET" if liquid else "LIMIT")
+            if not customer_id:
                 # Failed to send order
                 return
-            record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
             self.logger.info(
                 f"Selling {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit")
             self.position_status = PositionStatus.PENDING_SELL.name
+            self.pending_customer_id = customer_id
             self.last_updated = timestamp
+            record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit, customer_id)
+            update_position(self)
 
     def handle_price_drop(self, xch_price, stock_buy_price, stock_sell_price):
 
@@ -74,15 +80,18 @@ class DCAStockTrader(StockTrader):
             self.current_price = stock_buy_price
             request_xch = self.volume * self.current_price / xch_price
             timestamp = datetime.now()
-            if not trade(self.stock, "SELL", request_xch,
-                              self.volume, self.logger, self.stock+"-DCA"):
+            customer_id = trade(self.stock, "SELL", request_xch,
+                                self.volume, self.logger, self.stock+"-DCA")
+            if not customer_id:
                 # Failed to send order
                 return
-            record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit)
             self.logger.info(
                 f"Sold {self.volume} shares of {self.stock} at ${self.current_price} with {self.profit * 100:.2f}% profit, since the loss exceeded the maximum loss percentage")
             self.position_status = PositionStatus.PENDING_SELL.name
+            self.pending_customer_id = customer_id
             self.last_updated = timestamp
+            record_trade(self.stock, "SELL", self.current_price, self.volume, self.total_cost, self.profit, customer_id)
+            update_position(self)
             return
         if drop_percentage >= CONFIG["DCA_PERCENTAGE"] and self.buy_count < CONFIG["MAX_BUY_TIMES"]:  # 5% drop
             self.logger.info(f"Price dropped by 5% for {self.stock}, repurchasing...")

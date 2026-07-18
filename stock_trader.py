@@ -19,6 +19,7 @@ class StockTrader:
         self.current_price = 0
         self.profit = 0
         self.position_status = PositionStatus.TRADABLE.name
+        self.pending_customer_id = ""
         self.last_updated = datetime.now()
         self.load_position()
         # Check if stock token is added to Chia wallet

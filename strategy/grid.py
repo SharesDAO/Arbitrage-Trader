@@ -32,7 +32,7 @@ class GridStockTrader(StockTrader):
         self.logger.info(f"Loaded position for {self.stock}: {result}")
         if result:
             date_format = "%Y-%m-%d %H:%M:%S"
-            self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated = result
+            self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated, self.pending_customer_id = result
             self.last_updated = datetime.strptime(self.last_updated.split(".")[0], date_format)
         else:
             create_position(self)
@@ -43,7 +43,8 @@ class GridStockTrader(StockTrader):
         #    buy_price -= self.grid_width
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
-        if not trade(self.ticker, "BUY", volume, crypto_volume, self.logger, self.stock):
+        customer_id = trade(self.ticker, "BUY", volume, crypto_volume, self.logger, self.stock)
+        if not customer_id:
             # Failed to send order
             return
         self.volume = volume
@@ -52,8 +53,10 @@ class GridStockTrader(StockTrader):
         self.avg_price = self.total_cost / self.volume
         self.current_price = stock_price
         self.position_status = PositionStatus.PENDING_BUY.name
+        self.pending_customer_id = customer_id
         self.last_updated = timestamp
-        record_trade(self.stock, "BUY", buy_price * crypto_price, volume, crypto_volume, 0)
+        record_trade(self.stock, "BUY", buy_price * crypto_price, volume, crypto_volume, 0, customer_id)
+        update_position(self)
         self.logger.info(f"Buying {volume} shares of {self.stock} at {buy_price} {CONFIG['CURRENCY']}")
 
     def sell_stock(self, crypto_price, stock_price, liquid=False):
@@ -65,15 +68,18 @@ class GridStockTrader(StockTrader):
             sell_price = stock_price / crypto_price
         request_crypto = self.volume * sell_price
         timestamp = datetime.now()
-        if not trade(self.ticker, "SELL", request_crypto,
-                          self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT"):
+        customer_id = trade(self.ticker, "SELL", request_crypto,
+                            self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT")
+        if not customer_id:
             # Failed to send order
             return
-        record_trade(self.stock, "SELL", sell_price * crypto_price, self.volume, self.total_cost, request_crypto - self.total_cost)
         self.logger.info(
             f"Selling {self.volume} shares of {self.stock} at {sell_price} {CONFIG['CURRENCY']} with {request_crypto - self.total_cost} {CONFIG['CURRENCY']} profit")
         self.position_status = PositionStatus.PENDING_SELL.name if not liquid else PositionStatus.PENDING_LIQUIDATION.name
+        self.pending_customer_id = customer_id
         self.last_updated = timestamp
+        record_trade(self.stock, "SELL", sell_price * crypto_price, self.volume, self.total_cost, request_crypto - self.total_cost, customer_id)
+        update_position(self)
 
 
 def execute_grid(logger):
