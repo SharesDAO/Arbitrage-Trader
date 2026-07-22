@@ -5,6 +5,7 @@ import re
 import struct
 import subprocess
 from datetime import datetime
+from decimal import Decimal
 import time
 import base58
 import requests
@@ -65,14 +66,23 @@ def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer:
             else:
                 return send_token(address, order, STOCKS[ticker]["asset_id"], logger)
         elif CONFIG["BLOCKCHAIN"] == "EVM":
+            order = {
+                "customer_id": cid,
+                "type": order_type,
+                "offer": offer,
+                "request": request,
+                "token_address": STOCKS[ticker]["asset_id"],
+                "trade_source": "SVIM",
+                "currency": "USDC",
+            }
             # For EVM, wallet_id 1 = USDC (ERC20 for buy orders), wallet_id 0 = stock ERC20 token (for sell orders)
             if wallet_id == 1:
                 # For buy orders, pass stock token address so it can be included in memo
                 stock_token_address = STOCKS[ticker]["asset_id"]
-                return send_usdc(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, stock_token_address, logger)
+                return send_usdc(address, order, stock_token_address, logger)
             else:
                 # wallet_id 0 means sending stock ERC20 token
-                return send_stock_token(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, STOCKS[ticker]["asset_id"], logger)
+                return send_stock_token(address, order, STOCKS[ticker]["asset_id"], logger)
         elif CONFIG["BLOCKCHAIN"] == "CHIA":
             if wallet_id == 1:
                 offer_amount = int(offer * XCH_MOJO)
@@ -1109,29 +1119,44 @@ def get_token_balance():
             return None
 
 def get_live_stock_balance(ticker, logger):
-    """Fetch one stock's current SPL-token balance without using the cache."""
-    if CONFIG.get("BLOCKCHAIN") != "SOLANA":
-        raise ValueError("Live stock balance liquidation is only supported on Solana")
+    """Fetch one stock's current on-chain balance without using the cache."""
     if ticker not in STOCKS or not STOCKS[ticker].get("asset_id"):
         raise ValueError(f"Unknown stock ticker: {ticker}")
 
-    token_mint = STOCKS[ticker]["asset_id"]
+    blockchain = CONFIG.get("BLOCKCHAIN")
+    token_address = STOCKS[ticker]["asset_id"]
     try:
-        response = call_solana_rpc("getTokenAccountsByOwner", [
-            CONFIG["ADDRESS"],
-            {"mint": token_mint},
-            {"encoding": "jsonParsed"},
-        ])
-        accounts = response.get("result", {}).get("value", [])
-        balance = 0.0
-        for account in accounts:
-            token_amount = account["account"]["data"]["parsed"]["info"]["tokenAmount"]
-            balance += int(token_amount["amount"]) / (10 ** int(token_amount["decimals"]))
+        if blockchain == "SOLANA":
+            response = call_solana_rpc("getTokenAccountsByOwner", [
+                CONFIG["ADDRESS"],
+                {"mint": token_address},
+                {"encoding": "jsonParsed"},
+            ])
+            accounts = response.get("result", {}).get("value", [])
+            balance = 0.0
+            for account in accounts:
+                token_amount = account["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                balance += int(token_amount["amount"]) / (10 ** int(token_amount["decimals"]))
+        elif blockchain == "EVM":
+            private_key = os.environ.get("EVM_PRIVATE_KEY", "")
+            if not private_key:
+                raise ValueError("EVM_PRIVATE_KEY environment variable not set")
+            w3 = get_web3()
+            owner = Account.from_key(private_key).address
+            token_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(token_address),
+                abi=get_erc20_abi(),
+            )
+            raw_balance = token_contract.functions.balanceOf(owner).call()
+            decimals = _get_erc20_decimals(token_contract)
+            balance = Decimal(raw_balance) / Decimal(10 ** decimals)
+        else:
+            raise ValueError(f"Live stock balance liquidation is unsupported on {blockchain}")
 
-        logger.info(f"Fetched live {ticker} balance from Solana RPC: {balance}")
+        logger.info(f"Fetched live {ticker} balance from {blockchain} RPC: {balance}")
         return balance
     except Exception as e:
-        logger.error(f"Failed to fetch live {ticker} balance from Solana RPC: {e}")
+        logger.error(f"Failed to fetch live {ticker} balance from {blockchain} RPC: {e}")
         return None
 
 
@@ -1146,6 +1171,20 @@ def _build_solana_order_memo(order, offer, request):
         "customer_id": order["customer_id"],
         "trade_source": order.get("trade_source", "SVIM"),
         "currency": order.get("currency", "SOL"),
+    }, separators=(",", ":"))
+
+
+def _build_evm_order_memo(order, offer, request, token_address):
+    """Build the canonical SharesDAO EVM memo."""
+    return json.dumps({
+        "did_id": CONFIG["DID_HEX"],
+        "type": order.get("type", "LIMIT").upper(),
+        "offer": offer,
+        "request": request,
+        "token_address": token_address,
+        "customer_id": order["customer_id"],
+        "trade_source": order.get("trade_source", "SVIM"),
+        "currency": "USDC",
     }, separators=(",", ":"))
 
 
@@ -1405,6 +1444,14 @@ def get_gas_params(w3):
         }
 
 
+def _get_erc20_decimals(token_contract, default=18):
+    """Read token decimals from chain, falling back for older contracts."""
+    try:
+        return int(token_contract.functions.decimals().call())
+    except Exception:
+        return default
+
+
 def send_usdc(address: str, order, token_address: str, logger):
     """Send USDC (ERC20) transaction on EVM chain"""
     try:
@@ -1427,7 +1474,8 @@ def send_usdc(address: str, order, token_address: str, logger):
         # offer is USDC amount, use USDC decimals
         offer_amount = int(order["offer"] * (10 ** usdc_decimals))
         # request is stock token amount, use stock token decimals (typically 18)
-        stock_token_decimals = 18  # Stock tokens typically use 18 decimals
+        stock_contract = w3.eth.contract(address=stock_token_address, abi=get_erc20_abi())
+        stock_token_decimals = _get_erc20_decimals(stock_contract)
         request_amount = int(order["request"] * (10 ** stock_token_decimals))
         
         # Check USDC balance
@@ -1437,15 +1485,7 @@ def send_usdc(address: str, order, token_address: str, logger):
             logger.error(f"Insufficient USDC balance {balance}/{offer_amount}, skipping...")
             return False
         
-        # Build memo JSON with token_address
-        memo = json.dumps({
-            "did_id": CONFIG["DID_HEX"],
-            "customer_id": order["customer_id"],
-            "type": order.get("type", "LIMIT"),
-            "offer": offer_amount,
-            "request": request_amount,
-            "token_address": stock_token_address
-        })
+        memo = _build_evm_order_memo(order, offer_amount, request_amount, stock_token_address)
         
         # Build transfer transaction
         nonce = w3.eth.get_transaction_count(sender_address)
@@ -1520,6 +1560,9 @@ def send_usdc(address: str, order, token_address: str, logger):
         
         # Wait for transaction receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        if receipt.status != 1:
+            logger.error(f"USDC transaction reverted: {tx_hash.hex()}")
+            return False
         
         logger.info(f"Sent {offer_amount / (10 ** usdc_decimals)} USDC to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
         return True
@@ -1544,28 +1587,19 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         token_address = Web3.to_checksum_address(token_mint)
         recipient_address = Web3.to_checksum_address(address)
         
-        # Stock tokens typically use 18 decimals
-        token_decimals = 18
         usdc_decimals = CONFIG["USDC_DECIMALS"]
+        token_contract = w3.eth.contract(address=token_address, abi=get_erc20_abi())
+        token_decimals = _get_erc20_decimals(token_contract)
         offer_amount = int(order["offer"] * (10 ** token_decimals))
         request_amount = int(order["request"] * (10 ** usdc_decimals))
-        
+
         # Check token balance
-        token_contract = w3.eth.contract(address=token_address, abi=get_erc20_abi())
         balance = token_contract.functions.balanceOf(sender_address).call()
         if balance < offer_amount:
             logger.error(f"Insufficient stock token balance {balance}/{offer_amount}, skipping...")
             return False
         
-        # Build memo JSON with token_address
-        memo = json.dumps({
-            "did_id": CONFIG["DID_HEX"],
-            "customer_id": order["customer_id"],
-            "type": order.get("type", "LIMIT"),
-            "offer": offer_amount,
-            "request": request_amount,
-            "token_address": token_address
-        })
+        memo = _build_evm_order_memo(order, offer_amount, request_amount, token_address)
         
         # Build transfer transaction
         nonce = w3.eth.get_transaction_count(sender_address)
@@ -1640,6 +1674,9 @@ def send_stock_token(address: str, order, token_mint: str, logger):
         
         # Wait for transaction receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        if receipt.status != 1:
+            logger.error(f"Stock token transaction reverted: {tx_hash.hex()}")
+            return False
         
         logger.info(f"Sent {offer_amount / (10 ** token_decimals)} stock tokens to {address} with memo: '{memo}', tx_hash: {tx_hash.hex()}")
         return True
@@ -1724,6 +1761,13 @@ def send_native_token(address: str, order, logger):
 def get_erc20_abi():
     """Get minimal ERC20 ABI for balanceOf and transfer"""
     return [
+        {
+            "constant": True,
+            "inputs": [],
+            "name": "decimals",
+            "outputs": [{"name": "", "type": "uint8"}],
+            "type": "function"
+        },
         {
             "constant": True,
             "inputs": [{"name": "_owner", "type": "address"}],

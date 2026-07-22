@@ -216,8 +216,14 @@ def run(did: str, strategy: str, blockchain: str, wallet: int = None, chain: str
 def liquidate(did: str, ticker: str, strategy: str, blockchain: str, wallet: int = None, chain: str = None):
     load_config(did, strategy.upper(), blockchain.upper(), wallet, chain)
     ticker = ticker.upper()
-    if CONFIG["BLOCKCHAIN"] != "SOLANA":
-        raise click.ClickException("Live-balance liquidation currently supports Solana funds only")
+    supported_evm_chain = (
+        CONFIG["BLOCKCHAIN"] == "EVM"
+        and CONFIG.get("EVM_CHAIN") in {"bsc", "arbitrum"}
+    )
+    if CONFIG["BLOCKCHAIN"] != "SOLANA" and not supported_evm_chain:
+        raise click.ClickException(
+            "Live-balance liquidation supports Solana, BSC, and Arbitrum funds only"
+        )
     if ticker not in STOCKS:
         raise click.ClickException(f"Unknown stock ticker: {ticker}")
 
@@ -242,7 +248,7 @@ def liquidate(did: str, ticker: str, strategy: str, blockchain: str, wallet: int
             "Could not fetch market prices; no order was submitted and no data was deleted"
         )
 
-    request_crypto = volume * stock_price / crypto_price
+    request_crypto = float(volume) * stock_price / crypto_price
     if not send_asset(
             STOCKS[ticker]["sell_addr"], 0, ticker, request_crypto, volume,
             logger, f"{ticker}-Liquidation", "MARKET"):

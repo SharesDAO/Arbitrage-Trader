@@ -21,3 +21,9 @@ For a Solana fund, stop the bot and run: `python3 main.py liquid -d <YOUR_DID_IN
 
 The command fetches the stock's live SPL-token balance through `SOLANA_RPC_URL`, submits one market sell for the full balance, and then deletes all DCA/Grid positions and trades for that ticker. In production, set `SOLANA_RPC_URL` to the Alchemy Solana endpoint.
 
+For BSC or Arbitrum, set `EVM_PRIVATE_KEY` and the appropriate RPC URL, then run one of:
+
+- `python3 main.py liquid -d <YOUR_DID_IN_HEX> -t <TICKER> -s Grid -b EVM -c bsc`
+- `python3 main.py liquid -d <YOUR_DID_IN_HEX> -t <TICKER> -s Grid -b EVM -c arbitrum`
+
+EVM liquidation reads the live ERC-20 balance from the configured RPC and uses `USDC` as the order memo currency.
