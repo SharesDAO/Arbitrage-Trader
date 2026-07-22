@@ -51,10 +51,19 @@ ERC20_TRANSFER_EVENT_SIGNATURE = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4
 def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
     try:
         if CONFIG["BLOCKCHAIN"] == "SOLANA":
+            order = {
+                "customer_id": cid,
+                "type": order_type,
+                "offer": offer,
+                "request": request,
+                "token_address": STOCKS[ticker]["asset_id"],
+                "trade_source": "SVIM",
+                "currency": "SOL",
+            }
             if wallet_id == 1:
-                return send_sol(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, logger)
+                return send_sol(address, order, logger)
             else:
-                return send_token(address, {"customer_id": cid, "type": order_type, "offer": offer, "request": request}, STOCKS[ticker]["asset_id"], logger)
+                return send_token(address, order, STOCKS[ticker]["asset_id"], logger)
         elif CONFIG["BLOCKCHAIN"] == "EVM":
             # For EVM, wallet_id 1 = USDC (ERC20 for buy orders), wallet_id 0 = stock ERC20 token (for sell orders)
             if wallet_id == 1:
@@ -1099,6 +1108,47 @@ def get_token_balance():
             print(f"Cannot get token balance")
             return None
 
+def get_live_stock_balance(ticker, logger):
+    """Fetch one stock's current SPL-token balance without using the cache."""
+    if CONFIG.get("BLOCKCHAIN") != "SOLANA":
+        raise ValueError("Live stock balance liquidation is only supported on Solana")
+    if ticker not in STOCKS or not STOCKS[ticker].get("asset_id"):
+        raise ValueError(f"Unknown stock ticker: {ticker}")
+
+    token_mint = STOCKS[ticker]["asset_id"]
+    try:
+        response = call_solana_rpc("getTokenAccountsByOwner", [
+            CONFIG["ADDRESS"],
+            {"mint": token_mint},
+            {"encoding": "jsonParsed"},
+        ])
+        accounts = response.get("result", {}).get("value", [])
+        balance = 0.0
+        for account in accounts:
+            token_amount = account["account"]["data"]["parsed"]["info"]["tokenAmount"]
+            balance += int(token_amount["amount"]) / (10 ** int(token_amount["decimals"]))
+
+        logger.info(f"Fetched live {ticker} balance from Solana RPC: {balance}")
+        return balance
+    except Exception as e:
+        logger.error(f"Failed to fetch live {ticker} balance from Solana RPC: {e}")
+        return None
+
+
+def _build_solana_order_memo(order, offer, request):
+    """Build the canonical SharesDAO Solana memo."""
+    return json.dumps({
+        "did_id": CONFIG["DID_HEX"],
+        "type": order.get("type", "LIMIT").upper(),
+        "offer": offer,
+        "request": request,
+        "token_address": order["token_address"],
+        "customer_id": order["customer_id"],
+        "trade_source": order.get("trade_source", "SVIM"),
+        "currency": order.get("currency", "SOL"),
+    }, separators=(",", ":"))
+
+
 def send_sol(address: str, order, logger):
     try:
         client = Client(SOLANA_URL)
@@ -1106,7 +1156,7 @@ def send_sol(address: str, order, logger):
         sender_pubkey = private_key.pubkey()
         offer = int(order["offer"] * SOLANA_DECIAML)
         request = int(order["request"] * SOLANA_DECIAML)
-        memo = "{"+f'"did_id":"{CONFIG["DID_HEX"]}","customer_id":"{order["customer_id"]}","type":"{("LIMIT" if "type" not in order else order["type"])}","offer":{offer},"request":{request}'+"}"
+        memo = _build_solana_order_memo(order, offer, request)
         # If wallet does not have enough SOL, skip
         balance = get_crypto_balance()
         if balance - offer / SOLANA_DECIAML < 0.008:
@@ -1182,7 +1232,7 @@ def send_token(address: str, order, token_mint: str, logger):
         mint_pubkey = Pubkey.from_string(token_mint)
         offer = int(order["offer"] * SOLANA_DECIAML)
         request = int(order["request"] * SOLANA_DECIAML)
-        memo = "{"+f'"did_id":"{CONFIG["DID_HEX"]}","customer_id":"{order["customer_id"]}","type":"{("LIMIT" if "type" not in order else order["type"])}","offer":{offer},"request":{request}'+"}"
+        memo = _build_solana_order_memo(order, offer, request)
         # Get the recipient's public key
         recipient_pubkey = Pubkey.from_string(address)
         token_balance = get_token_balance()

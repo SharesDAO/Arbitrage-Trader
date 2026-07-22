@@ -16,4 +16,8 @@ Just checkout the latest code from Github or download the zip file and unzip to 
 1. Login your account on the [Shares DAO](https://www.sharesdao.com) and edit your trading strategy there.
 2. Restart your trading bot after saved the strategy.
 
+# How to manually liquidate a stock
+For a Solana fund, stop the bot and run: `python3 main.py liquid -d <YOUR_DID_IN_HEX> -t <Stock Ticker(e.g. GOOGL)> -s [DCA|Grid] -b SOLANA`
+
+The command fetches the stock's live SPL-token balance through `SOLANA_RPC_URL`, submits one market sell for the full balance, and then deletes all DCA/Grid positions and trades for that ticker. In production, set `SOLANA_RPC_URL` to the Alchemy Solana endpoint.
 

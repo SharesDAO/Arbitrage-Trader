@@ -75,3 +75,18 @@ def delete_trade(trade_id):
     cursor.execute('''DELETE FROM trades WHERE id = ?''',
                    (trade_id,))
     conn.commit()
+
+
+def delete_stock_data(ticker):
+    """Delete all DCA/Grid positions and trade history for a ticker atomically."""
+    grid_pattern = f"{ticker}-Grid%"
+    with conn:
+        trades = conn.execute(
+            '''DELETE FROM trades WHERE stock = ? OR stock LIKE ?''',
+            (ticker, grid_pattern)
+        ).rowcount
+        positions = conn.execute(
+            '''DELETE FROM positions WHERE stock = ? OR stock LIKE ?''',
+            (ticker, grid_pattern)
+        ).rowcount
+    return {"trades": trades, "positions": positions}
