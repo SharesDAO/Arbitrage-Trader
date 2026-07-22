@@ -29,7 +29,7 @@ class GridStockTrader(StockTrader):
         self.logger.info(f"Loaded position for {self.stock}: {result}")
         if result:
             date_format = "%Y-%m-%d %H:%M:%S"
-            self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated = result
+            self.volume, self.buy_count, self.last_buy_price, self.total_cost, self.avg_price, self.current_price, self.profit, self.position_status, self.last_updated, self.pending_customer_id = result
             self.last_updated = datetime.strptime(self.last_updated.split(".")[0], date_format)
         else:
             create_position(self)
@@ -50,7 +50,8 @@ class GridStockTrader(StockTrader):
         # The volume calculation here is in human-readable units, conversion happens in send_asset
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.ticker]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock):
+        customer_id = send_asset(STOCKS[self.ticker]["buy_addr"], 1, self.ticker, volume, crypto_volume, self.logger, self.stock)
+        if not customer_id:
             self.logger.error(f"Failed to send buy order for {self.stock} (volume={volume}, crypto_volume={crypto_volume}, buy_price={buy_price})")
             # Failed to send order - don't update position status
             return
@@ -60,8 +61,10 @@ class GridStockTrader(StockTrader):
         self.avg_price = self.total_cost / self.volume
         self.current_price = stock_price
         self.position_status = PositionStatus.PENDING_BUY.name
+        self.pending_customer_id = customer_id
         self.last_updated = timestamp
-        record_trade(self.stock, "BUY", buy_price * crypto_price, volume, crypto_volume, 0)
+        record_trade(self.stock, "BUY", buy_price * crypto_price, volume, crypto_volume, 0, customer_id)
+        update_position(self)
         self.logger.info(f"Buying {volume} shares of {self.stock} at {buy_price} {CONFIG['CURRENCY']}")
         time.sleep(3)
 
@@ -79,15 +82,18 @@ class GridStockTrader(StockTrader):
             self.logger.info(f"Order value ${order_value_usd:.2f} is less than $5, skipping sell order for {self.stock}")
             return
         timestamp = datetime.now()
-        if not send_asset(STOCKS[self.ticker]["sell_addr"], 0, self.ticker, request_crypto,
-                          self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT"):
+        customer_id = send_asset(STOCKS[self.ticker]["sell_addr"], 0, self.ticker, request_crypto,
+                                 self.volume, self.logger, self.stock, "MARKET" if liquid else "LIMIT")
+        if not customer_id:
             # Failed to send order
             return
-        record_trade(self.stock, "SELL", sell_price * crypto_price, self.volume, self.total_cost, request_crypto - self.total_cost)
         self.logger.info(
             f"Selling {self.volume} shares of {self.stock} at {sell_price} {CONFIG['CURRENCY']} with {request_crypto - self.total_cost} {CONFIG['CURRENCY']} profit")
         self.position_status = PositionStatus.PENDING_SELL.name
+        self.pending_customer_id = customer_id
         self.last_updated = timestamp
+        record_trade(self.stock, "SELL", sell_price * crypto_price, self.volume, self.total_cost, request_crypto - self.total_cost, customer_id)
+        update_position(self)
         time.sleep(3)
 
     def adjust_volume(self, total_volume):

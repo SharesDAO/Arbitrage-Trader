@@ -16,7 +16,7 @@ from eth_account.messages import encode_defunct
 
 from util.bech32m import encode_puzzle_hash
 from constants.constant import PositionStatus, CONFIG, REQUEST_TIMEOUT, StrategyType, ALCHEMY_URLS, BLOCKS_PER_24H
-from util.db import update_position, get_last_trade, delete_trade
+from util.db import update_position, get_last_trade, get_trade_by_customer_id, delete_trade
 from util.stock import STOCKS
 from solana.rpc.api import Client
 from solana.rpc.commitment import Commitment
@@ -47,13 +47,59 @@ SOLANA_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.c
 ERC20_TRANSFER_SIGNATURE = "0xa9059cbb"
 # ERC20 Transfer event signature: Transfer(address,address,uint256)
 ERC20_TRANSFER_EVENT_SIGNATURE = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+CUSTOMER_ID_SEPARATOR = "|"
+
+
+def build_order_customer_id(base_customer_id, timestamp_ms=None):
+    """Create an order-scoped customer ID while retaining its strategy prefix."""
+    if timestamp_ms is None:
+        timestamp_ms = time.time_ns() // 1_000_000
+    return f"{base_customer_id}{CUSTOMER_ID_SEPARATOR}{int(timestamp_ms)}"
+
+
+def _legacy_customer_ids(trader):
+    ids = {trader.stock}
+    if trader.type == StrategyType.DCA:
+        ids.add(f"{trader.stock}-DCA")
+    return ids
+
+
+def customer_id_matches(trader, candidate):
+    """Use exact persisted IDs, with bounded fallback for pre-migration rows."""
+    if not candidate:
+        return False
+
+    candidate = str(candidate)
+    pending_customer_id = getattr(trader, "pending_customer_id", "")
+    if pending_customer_id:
+        return candidate == pending_customer_id
+
+    legacy_ids = _legacy_customer_ids(trader)
+    if candidate in legacy_ids:
+        return True
+
+    try:
+        base, timestamp_text = candidate.rsplit(CUSTOMER_ID_SEPARATOR, 1)
+        if base not in legacy_ids:
+            return False
+        order_timestamp = int(timestamp_text) / 1000
+        local_timestamp = trader.last_updated.timestamp()
+        return abs(order_timestamp - local_timestamp) <= CONFIG.get("MAX_ORDER_TIME_OFFSET", 600)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _get_pending_trade(trader):
+    pending_customer_id = getattr(trader, "pending_customer_id", "")
+    return get_trade_by_customer_id(pending_customer_id) or get_last_trade(trader.stock)
 
 
 def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer: float, logger, cid = "", order_type="LIMIT"):
+    order_customer_id = build_order_customer_id(cid)
     try:
         if CONFIG["BLOCKCHAIN"] == "SOLANA":
             order = {
-                "customer_id": cid,
+                "customer_id": order_customer_id,
                 "type": order_type,
                 "offer": offer,
                 "request": request,
@@ -62,12 +108,13 @@ def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer:
                 "currency": "SOL",
             }
             if wallet_id == 1:
-                return send_sol(address, order, logger)
+                sent = send_sol(address, order, logger)
             else:
-                return send_token(address, order, STOCKS[ticker]["asset_id"], logger)
+                sent = send_token(address, order, STOCKS[ticker]["asset_id"], logger)
+            return order_customer_id if sent else False
         elif CONFIG["BLOCKCHAIN"] == "EVM":
             order = {
-                "customer_id": cid,
+                "customer_id": order_customer_id,
                 "type": order_type,
                 "offer": offer,
                 "request": request,
@@ -79,10 +126,11 @@ def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer:
             if wallet_id == 1:
                 # For buy orders, pass stock token address so it can be included in memo
                 stock_token_address = STOCKS[ticker]["asset_id"]
-                return send_usdc(address, order, stock_token_address, logger)
+                sent = send_usdc(address, order, stock_token_address, logger)
             else:
                 # wallet_id 0 means sending stock ERC20 token
-                return send_stock_token(address, order, STOCKS[ticker]["asset_id"], logger)
+                sent = send_stock_token(address, order, STOCKS[ticker]["asset_id"], logger)
+            return order_customer_id if sent else False
         elif CONFIG["BLOCKCHAIN"] == "CHIA":
             if wallet_id == 1:
                 offer_amount = int(offer * XCH_MOJO)
@@ -95,12 +143,12 @@ def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer:
             result = subprocess.check_output(
                 [CHIA_PATH, "wallet", "send", f'--fingerprint={CONFIG["WALLET_FINGERPRINT"]}', f'--id={wallet_id}',
                 f"--address={address}", f"--amount={amount}", f'--fee={CONFIG["CHIA_TX_FEE"]}', "--reuse", "--override", "-e",
-                '{"did_id":"' + CONFIG["DID_HEX"] + '","customer_id":"' + cid + '", "type":"' + order_type.upper() + '", "offer":' + str(offer_amount) + ', "request":' + str(
+                '{"did_id":"' + CONFIG["DID_HEX"] + '","customer_id":"' + order_customer_id + '", "type":"' + order_type.upper() + '", "offer":' + str(offer_amount) + ', "request":' + str(
                     request_amount) + '}']).decode(
                 "utf-8")
             if result.find("SUCCESS") > 0 or result.find("INVALID_FEE_TOO_CLOSE_TO_ZERO") > 0:
                 logger.info(f"Sent {offer_amount} wallet_id {wallet_id} to {address}")
-                return True
+                return order_customer_id
             else:
                 if result.find("Can't spend more than wallet balance") > 0:
                     logger.error(f"Insufficient balance to send {offer_amount} wallet_id {wallet_id} to {address}")
@@ -108,8 +156,7 @@ def send_asset(address: str, wallet_id: int, ticker: str, request: float, offer:
                 logger.error(f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}: {result}")
                 return False
     except Exception as e:
-        logger.error(
-            f"Failed to sent {offer_amount} wallet_id {wallet_id} to {address}, please check your Chia wallet: {e}")
+        logger.error(f"Failed to send {ticker} order to {address}: {e}")
         return False
 
 
@@ -440,6 +487,14 @@ def extract_order_timestamp(order_id: str) -> float:
         return 0.0
 
 
+def _wallet_order_time_matches(trader, order_id):
+    if getattr(trader, "pending_customer_id", ""):
+        return True
+    return extract_order_timestamp(order_id) > (
+        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]
+    )
+
+
 def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
     """
     Check pending positions and match them with transactions.
@@ -526,9 +581,9 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                             if not tx["memo"]:
                                 logger.debug(f"Skipping Grid buy confirmation check for tx {tx.get('signature', 'unknown')}: no memo")
                                 continue
-                            if "customer_id" in tx["memo"] and tx["memo"]["customer_id"] == trader.stock:
-                                if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
-                                        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                            if customer_id_matches(trader, tx["memo"].get("customer_id")):
+                                if "order_id" in tx["memo"] and _wallet_order_time_matches(
+                                        trader, tx["memo"]["order_id"]):
                                     if tx["memo"]["status"] == "COMPLETED":
                                         trader.position_status = PositionStatus.TRADABLE.name
                                         # Determine divisor based on token type
@@ -566,12 +621,11 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                     continue
                                 logger.debug(f"Checking buy cancellation: memo={tx['memo']}, ticker={trader.ticker}, stock={trader.stock}")
                                 if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                                    if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
-                                            trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                                    if "order_id" in tx["memo"] and _wallet_order_time_matches(
+                                            trader, tx["memo"]["order_id"]):
                                         if tx["memo"]["status"] == "CANCELLED":
-                                            if trader.type == StrategyType.DCA or (
-                                                    trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
-                                                last_trade = get_last_trade(trader.stock)
+                                            if customer_id_matches(trader, tx["memo"].get("customer_id")):
+                                                last_trade = _get_pending_trade(trader)
                                                 trader.volume -= last_trade[4]
                                                 trader.total_cost -= last_trade[5]
                                                 trader.position_status = PositionStatus.TRADABLE.name
@@ -580,7 +634,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                                 trader.last_updated = datetime.now()
                                                 update_position(trader)
                                                 delete_trade(last_trade[0])
-                                                last_trade = get_last_trade(trader.stock)
+                                                last_trade = _get_pending_trade(trader)
                                                 if last_trade is None or last_trade[2] == 'SELL':
                                                     trader.last_buy_price = 0
                                                     trader.avg_price = 0
@@ -610,12 +664,11 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                             # Check if the order is cancelled
                             logger.debug(f"Checking buy cancellation: memo={tx['memo']}, ticker={trader.ticker}, timestamp={trader.last_updated.timestamp() - CONFIG['MAX_ORDER_TIME_OFFSET']}, type={trader.type}, stock={trader.stock}")
                             if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                                if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
-                                        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                                if "order_id" in tx["memo"] and _wallet_order_time_matches(
+                                        trader, tx["memo"]["order_id"]):
                                     if tx["memo"]["status"] == "CANCELLED":
-                                        if trader.type == StrategyType.DCA or (
-                                                trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]):
-                                            last_trade = get_last_trade(trader.stock)
+                                        if customer_id_matches(trader, tx["memo"].get("customer_id")):
+                                            last_trade = _get_pending_trade(trader)
                                             trader.volume -= last_trade[4]
                                             trader.total_cost -= last_trade[5]
                                             trader.position_status = PositionStatus.TRADABLE.name
@@ -624,7 +677,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                             trader.last_updated = datetime.now()
                                             update_position(trader)
                                             delete_trade(last_trade[0])
-                                            last_trade = get_last_trade(trader.stock)
+                                            last_trade = _get_pending_trade(trader)
                                             if last_trade is None or last_trade[2] == 'SELL':
                                                 trader.last_buy_price = 0
                                                 trader.avg_price = 0
@@ -657,14 +710,14 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                             continue
                         logger.debug(f"Checking sell cancellation: memo={tx['memo']}, ticker={trader.ticker}, stock={trader.stock}")
                         if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
-                            if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
-                                    trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
+                            if "order_id" in tx["memo"] and _wallet_order_time_matches(
+                                    trader, tx["memo"]["order_id"]):
                                 if tx["memo"]["status"] == "CANCELLED":
-                                    if trader.type == StrategyType.DCA or trader.stock == tx["memo"]["customer_id"]:
+                                    if customer_id_matches(trader, tx["memo"].get("customer_id")):
                                         trader.position_status = PositionStatus.TRADABLE.name
                                         trader.last_updated = datetime.now()
                                         update_position(trader)
-                                        last_trade = get_last_trade(trader.stock)
+                                        last_trade = _get_pending_trade(trader)
                                         delete_trade(last_trade[0])
                                         confirmed = True
                                         logger.info(f"Sell {trader.stock} cancelled")
@@ -686,9 +739,10 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                 if tx["memo"] and "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                                     logger.debug(
                                         f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo'].get('order_id', 'N/A')}")
-                                    if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
-                                            trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                        if tx["memo"]["status"] == "COMPLETED":
+                                    if "order_id" in tx["memo"] and _wallet_order_time_matches(
+                                            trader, tx["memo"]["order_id"]):
+                                        if tx["memo"]["status"] == "COMPLETED" and customer_id_matches(
+                                                trader, tx["memo"].get("customer_id")):
                                             if trader.type == StrategyType.DCA:
                                                 # The order is created after the last update
                                                 trader.profit = 0
@@ -704,7 +758,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                                 update_position(trader)
                                                 logger.info(f"Sell {trader.stock} confirmed")
                                                 break
-                                            if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
+                                            if trader.type == StrategyType.GRID:
                                                 # The order is created after the last update
                                                 usdc_decimals = CONFIG["USDC_DECIMALS"]
                                                 divisor = 10**usdc_decimals
@@ -735,9 +789,10 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                             if "symbol" in tx["memo"] and tx["memo"]["symbol"] == trader.ticker:
                                 logger.debug(
                                     f"Last Update {str(trader.last_updated.timestamp())}, Order: {tx['memo'].get('order_id', 'N/A')}")
-                                if "order_id" in tx["memo"] and extract_order_timestamp(tx["memo"]["order_id"]) > (
-                                        trader.last_updated.timestamp() - CONFIG["MAX_ORDER_TIME_OFFSET"]):
-                                    if tx["memo"]["status"] == "COMPLETED":
+                                if "order_id" in tx["memo"] and _wallet_order_time_matches(
+                                        trader, tx["memo"]["order_id"]):
+                                    if tx["memo"]["status"] == "COMPLETED" and customer_id_matches(
+                                            trader, tx["memo"].get("customer_id")):
                                         if trader.type == StrategyType.DCA:
                                             # The order is created after the last update
                                             trader.profit = 0
@@ -753,7 +808,7 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                                             update_position(trader)
                                             logger.info(f"Sell {trader.stock} confirmed")
                                             break
-                                        if trader.type == StrategyType.GRID and trader.stock == tx["memo"]["customer_id"]:
+                                        if trader.type == StrategyType.GRID:
                                             # The order is created after the last update
                                             if CONFIG["BLOCKCHAIN"] == "SOLANA":
                                                 divisor = SOL_LAMPORTS
@@ -775,6 +830,57 @@ def check_pending_positions(traders, logger, pre_fetched_token_txs=None):
                             logger.error(f"Failed to confirm {trader.stock}: {e}")
                             continue
     return False
+
+
+def _normalize_api_timestamp(value):
+    """Normalize seconds, milliseconds, or microseconds to Unix seconds."""
+    timestamp = float(value)
+    while timestamp > 10_000_000_000:
+        timestamp /= 1000
+    return timestamp
+
+
+def _fetch_transactions_by_status(get_user_transactions, status, logger):
+    """Fetch every available API page for one order status."""
+    page_size = CONFIG.get("ORDER_STATUS_PAGE_SIZE", 200)
+    max_pages = CONFIG.get("ORDER_STATUS_MAX_PAGES", 50)
+    transactions = []
+    seen = set()
+    start_index = 0
+
+    for _ in range(max_pages):
+        page = get_user_transactions(
+            status=status,
+            start_index=start_index,
+            num_of_transactions=page_size,
+            sort_by_ascending=False,
+            logger=logger,
+        )
+        if not page:
+            break
+
+        new_count = 0
+        for tx in page:
+            fingerprint = json.dumps(tx, sort_keys=True, default=str)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                transactions.append(tx)
+                new_count += 1
+
+        if len(page) < page_size:
+            break
+        if new_count == 0:
+            logger.warning(
+                f"SharesDAO pagination repeated status {status} at start_index {start_index}; stopping"
+            )
+            break
+        start_index += len(page)
+    else:
+        logger.warning(
+            f"Reached ORDER_STATUS_MAX_PAGES while fetching status {status}; results may be incomplete"
+        )
+
+    return transactions
 
 
 def check_order_confirmation(traders, logger):
@@ -801,7 +907,7 @@ def check_order_confirmation(traders, logger):
     all_transactions = []
     for status in [3, 4]:
         try:
-            txs = get_user_transactions(status=status, num_of_transactions=200, logger=logger)
+            txs = _fetch_transactions_by_status(get_user_transactions, status, logger)
             all_transactions.extend(txs)
         except Exception as e:
             logger.warning(f"Failed to fetch API transactions (status={status}): {e}")
@@ -815,25 +921,33 @@ def check_order_confirmation(traders, logger):
 
         for tx in all_transactions:
             try:
-                if tx.get("customer_id") != trader.stock:
+                if not customer_id_matches(trader, tx.get("customer_id")):
                     continue
 
                 tx_type = tx.get("type")
                 if tx_type is None:
                     continue
                 # type % 2 == 1 means BUY, otherwise SELL
-                if (tx_type % 2 == 1) != is_buy_order:
+                if (int(tx_type) % 2 == 1) != is_buy_order:
                     continue
 
                 tx_created = tx.get("created_date")
-                if tx_created is not None:
-                    if abs(float(tx_created) - trader_timestamp) > order_time_offset:
+                if tx_created is not None and not getattr(trader, "pending_customer_id", ""):
+                    if abs(_normalize_api_timestamp(tx_created) - trader_timestamp) > order_time_offset:
                         continue
 
                 tx_status = tx.get("status")
+                if tx_status is not None:
+                    tx_status = int(tx_status)
                 tx_request = tx.get("request")
 
                 if tx_status == 4:  # Executed
+                    if trader.type == StrategyType.GRID and tx_request is None:
+                        logger.warning(
+                            f"Executed API order for {trader.stock} has no request amount; "
+                            "keeping it pending rather than applying an incomplete fill"
+                        )
+                        continue
                     if is_buy_order:
                         if trader.type == StrategyType.DCA:
                             token_balance = get_token_balance()
@@ -885,7 +999,7 @@ def check_order_confirmation(traders, logger):
 
                 elif tx_status == 3:  # Cancelled
                     if is_buy_order:
-                        last_trade = get_last_trade(trader.stock)
+                        last_trade = _get_pending_trade(trader)
                         if last_trade:
                             trader.volume -= last_trade[4]
                             trader.total_cost -= last_trade[5]
@@ -894,7 +1008,7 @@ def check_order_confirmation(traders, logger):
                             trader.last_updated = datetime.now()
                             update_position(trader)
                             delete_trade(last_trade[0])
-                            last_trade = get_last_trade(trader.stock)
+                            last_trade = _get_pending_trade(trader)
                             if last_trade is None or last_trade[2] == 'SELL':
                                 trader.last_buy_price = 0
                                 trader.avg_price = 0
@@ -904,7 +1018,7 @@ def check_order_confirmation(traders, logger):
                                 trader.avg_price = trader.total_cost / trader.volume if trader.volume > 0 else 0
                                 trader.last_buy_price = last_trade[3]
                     else:
-                        last_trade = get_last_trade(trader.stock)
+                        last_trade = _get_pending_trade(trader)
                         if last_trade:
                             delete_trade(last_trade[0])
                     trader.position_status = PositionStatus.TRADABLE.name
@@ -915,7 +1029,7 @@ def check_order_confirmation(traders, logger):
                     break
 
             except Exception as e:
-                logger.debug(f"Error processing API transaction for {trader.stock}: {e}")
+                logger.warning(f"Error processing API transaction for {trader.stock}: {e}; tx={tx}")
                 continue
 
     logger.info(f"API confirmed/cancelled {confirmed_count}/{len(pending_traders)} pending orders")
@@ -924,10 +1038,8 @@ def check_order_confirmation(traders, logger):
 
 def sync_pending_orders(traders, logger):
     """
-    Safety net: if a local PENDING order no longer appears in the exchange's pending
-    list (status 1=Pending, 2=Processing), it was already executed or cancelled but
-    wasn't caught by check_order_confirmation. Reset such positions to TRADABLE so
-    the bot can recheck and retry if needed.
+    Check whether local pending orders still appear in exchange statuses 1/2.
+    Absence is diagnostic only; it does not prove execution or cancellation.
     """
     from util.sharesdao import get_user_transactions
 
@@ -944,7 +1056,7 @@ def sync_pending_orders(traders, logger):
     exchange_pending = []
     for status in [1, 2]:
         try:
-            txs = get_user_transactions(status=status, num_of_transactions=200, logger=logger)
+            txs = _fetch_transactions_by_status(get_user_transactions, status, logger)
             exchange_pending.extend(txs)
         except Exception as e:
             logger.warning(f"Failed to fetch pending transactions (status={status}): {e}")
@@ -959,32 +1071,42 @@ def sync_pending_orders(traders, logger):
 
         for tx in exchange_pending:
             try:
-                if tx.get("customer_id") != trader.stock:
+                if not customer_id_matches(trader, tx.get("customer_id")):
                     continue
                 tx_type = tx.get("type")
                 if tx_type is None:
                     continue
-                if (tx_type % 2 == 1) != is_buy_order:
+                if (int(tx_type) % 2 == 1) != is_buy_order:
                     continue
+                if getattr(trader, "pending_customer_id", ""):
+                    found = True
+                    break
                 tx_created = tx.get("created_date")
                 if tx_created is not None:
-                    if abs(float(tx_created) - trader_timestamp) <= 60:
+                    if abs(_normalize_api_timestamp(tx_created) - trader_timestamp) <= CONFIG.get("MAX_ORDER_TIME_OFFSET", 600):
                         found = True
                         break
                 else:
                     found = True
                     break
             except Exception as e:
-                logger.debug(f"Error checking pending tx for {trader.stock}: {e}")
+                logger.warning(f"Error checking pending tx for {trader.stock}: {e}; tx={tx}")
 
         if not found:
-            logger.info(f"{trader.stock} ({trader.position_status}) not in exchange pending list — resetting to TRADABLE")
-            trader.position_status = PositionStatus.TRADABLE.name
-            trader.last_updated = datetime.now()
-            update_position(trader)
-            synced_count += 1
+            age_seconds = max(0, (datetime.now() - trader.last_updated).total_seconds())
+            logger.warning(
+                f"{trader.stock} ({trader.position_status}) is absent from exchange statuses 1/2 "
+                f"after {age_seconds:.0f}s; keeping it pending until status 3/4 is proven"
+            )
+        else:
+            age_seconds = max(0, (datetime.now() - trader.last_updated).total_seconds())
+            if age_seconds > CONFIG.get("MAX_ORDER_TIME_OFFSET", 600):
+                logger.warning(
+                    f"{trader.stock} has remained {trader.position_status} on the exchange for "
+                    f"{age_seconds:.0f}s and requires exchange-side investigation"
+                )
 
-    logger.info(f"Synced {synced_count}/{len(pending_traders)} stale pending orders")
+    logger.info(f"Safely inspected {len(pending_traders)} pending orders; no unproven states were reset")
     return synced_count
 
 
@@ -2376,7 +2498,7 @@ def confirm_order_by_transaction(tx_hash: str, trader, logger):
             result["error"] = f"Transaction symbol '{memo.get('symbol')}' does not match trader ticker '{trader.ticker}'"
             return result
         
-        if memo.get("customer_id") != trader.stock:
+        if not customer_id_matches(trader, memo.get("customer_id")):
             result["error"] = f"Transaction customer_id '{memo.get('customer_id')}' does not match trader stock '{trader.stock}'"
             return result
         
@@ -2422,7 +2544,7 @@ def confirm_order_by_transaction(tx_hash: str, trader, logger):
         if status == "CANCELLED":
             if side == "BUY" and trader.position_status == PositionStatus.PENDING_BUY.name:
                 # Buy order cancelled - revert the position
-                last_trade = get_last_trade(trader.stock)
+                last_trade = _get_pending_trade(trader)
                 if last_trade:
                     trader.volume -= last_trade[4]
                     trader.total_cost -= last_trade[5]
@@ -2433,7 +2555,7 @@ def confirm_order_by_transaction(tx_hash: str, trader, logger):
                     delete_trade(last_trade[0])
                     
                     # Check if there are more trades
-                    last_trade = get_last_trade(trader.stock)
+                    last_trade = _get_pending_trade(trader)
                     if last_trade is None or last_trade[2] == 'SELL':
                         trader.last_buy_price = 0
                         trader.avg_price = 0
@@ -2457,7 +2579,7 @@ def confirm_order_by_transaction(tx_hash: str, trader, logger):
                 trader.last_updated = datetime.now()
                 update_position(trader)
                 
-                last_trade = get_last_trade(trader.stock)
+                last_trade = _get_pending_trade(trader)
                 if last_trade:
                     delete_trade(last_trade[0])
                 
