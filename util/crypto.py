@@ -1093,9 +1093,44 @@ def sync_pending_orders(traders, did_id, logger):
                     logger.debug(f"Error checking transaction: {e}")
                     continue
             
-            # If no match found, mark as confirmed
+            # If no match found, the order left the pending queue (executed or cancelled).
+            # Apply the correct state transition based on order side to keep volume in
+            # sync with the actual wallet balance.
             if not found_match:
-                logger.info(f"Local pending order {trader.stock} not found in exchange pending transactions, marking as confirmed")
+                if is_buy_order:
+                    # BUY disappeared — treat as cancelled: roll back volume/cost.
+                    logger.info(f"Local pending BUY {trader.stock} not found in exchange pending, rolling back")
+                    last_trade = get_last_trade(trader.stock)
+                    if last_trade is not None:
+                        trader.volume -= last_trade[4]
+                        trader.total_cost -= last_trade[5]
+                        if trader.type == StrategyType.DCA:
+                            trader.buy_count -= 1
+                        delete_trade(last_trade[0])
+                        last_trade = get_last_trade(trader.stock)
+                        if last_trade is None or last_trade[2] == 'SELL':
+                            trader.last_buy_price = 0
+                            trader.avg_price = 0
+                            trader.volume = 0
+                            trader.total_cost = 0
+                        else:
+                            trader.avg_price = trader.total_cost / trader.volume if trader.volume > 0 else 0
+                            trader.last_buy_price = last_trade[3]
+                    else:
+                        logger.warning(f"No last trade found for {trader.stock} during BUY sync rollback")
+                else:
+                    # SELL disappeared — treat as executed: zero out the position.
+                    logger.info(f"Local pending SELL {trader.stock} not found in exchange pending, marking as sold")
+                    if trader.type == StrategyType.GRID:
+                        trader.buy_count += 1
+                    else:
+                        trader.profit = 0
+                        trader.buy_count = 0
+                    trader.volume = 0
+                    trader.last_buy_price = 0
+                    trader.total_cost = 0
+                    trader.avg_price = 0
+                    trader.current_price = 0
                 trader.position_status = PositionStatus.TRADABLE.name
                 trader.last_updated = datetime.now()
                 update_position(trader)
