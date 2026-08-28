@@ -110,7 +110,12 @@ def execute_grid(logger):
         except Exception as e:
             logger.error(f"Failed to sync pending orders via API: {e}")
         if fund_crypto == 0:
-            fund_crypto = get_fund_value(logger) / get_crypto_price(logger)
+            crypto_price = get_crypto_price(logger)
+            if not crypto_price:
+                logger.error(f"Failed to get {CONFIG['CURRENCY']} price, skipping...")
+                time.sleep(60)
+                continue
+            fund_crypto = get_fund_value(logger) / crypto_price
         logger.info(f"Fund value: {fund_crypto} {CONFIG['CURRENCY']}")
         if fund_crypto == 0:
             logger.error("Failed to get fund value, skipping...")
@@ -149,7 +154,9 @@ def execute_grid(logger):
             else:
                 if trader.position_status == PositionStatus.PENDING_BUY.name:
                     stocks_stats[trader.ticker]["buying"] += 1
-                if trader.position_status == PositionStatus.PENDING_SELL.name:
+                if trader.position_status in (
+                        PositionStatus.PENDING_SELL.name,
+                        PositionStatus.PENDING_LIQUIDATION.name):
                     stocks_stats[trader.ticker]["selling"] += 1
             stock_balance += trader.volume * trader.current_price
             update_position(trader)

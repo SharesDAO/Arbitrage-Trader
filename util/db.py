@@ -88,6 +88,18 @@ def get_last_trade(stock):
     return result
 
 
+def get_trade_by_customer_id(customer_id):
+    """Return the trade associated with an order-scoped customer ID."""
+    if not customer_id:
+        return None
+    cursor.execute(
+        '''SELECT id, stock, action, price, volume, crypto_cost, profit, customer_id
+           FROM trades WHERE customer_id = ? ORDER BY timestamp DESC LIMIT 1''',
+        (customer_id,)
+    )
+    return cursor.fetchone()
+
+
 def delete_trade(trade_id):
     cursor.execute('''DELETE FROM trades WHERE id = ?''',
                    (trade_id,))

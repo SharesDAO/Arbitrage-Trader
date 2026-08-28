@@ -69,7 +69,7 @@ def check_cash_reserve(traders, fund_xch, is_buy, logger):
         else:
             return True
     except Exception as e:
-        logger.error(f"Failed to check reverse fund {CONFIG['FUND_ID']}. {e}")
+        logger.error(f"Failed to check reserve for fund {CONFIG.get('POOL_ID', 'unknown')}. {e}")
         raise e
 
 

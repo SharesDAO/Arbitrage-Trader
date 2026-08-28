@@ -242,18 +242,16 @@ def sync(strategy: str):
         logger.error(f"Invalid strategy: {strategy}")
         return
     
-    # Only sync for Chia blockchain
-    if CONFIG["BLOCKCHAIN"] != "CHIA":
-        logger.warning(f"Sync command only works for CHIA blockchain, current: {CONFIG['BLOCKCHAIN']}")
-        return
-    
     did_id = CONFIG.get("DID_ID")
     if not did_id:
         logger.error("DID_ID not found in CONFIG")
         return
     
     synced_count = sync_pending_orders(traders, did_id, logger)
-    print(f"Synced {synced_count} pending orders")
+    print(
+        f"Found {synced_count} local pending orders in exchange statuses 1/2. "
+        "Unresolved orders were left pending."
+    )
 
 cli.add_command(run)
 cli.add_command(liquidate)
