@@ -1521,15 +1521,20 @@ def get_web3():
 def get_gas_params(w3):
     """Get gas parameters for EVM transaction (supports both legacy and EIP-1559)"""
     evm_chain = CONFIG.get("EVM_CHAIN", "").lower()
-    # BSC exposes baseFeePerGas via BEP-95 but its value is near-zero, so the EIP-1559
-    # formula yields ~2 gwei — below the 3 gwei minimum enforced by BSC validators.
-    # Force legacy gas pricing for BSC with a hard 3 gwei floor to avoid stuck txs.
+    # BSC uses legacy gas pricing. Follow the RPC quote with a small buffer instead
+    # of the obsolete 3 gwei floor, which substantially overpays at current rates.
+    # The floor remains configurable for RPC outages or future network changes.
     if evm_chain == "bsc":
+        minimum_gwei = Decimal(os.environ.get("BSC_MIN_GAS_PRICE_GWEI", "0.1"))
+        minimum_gas_price = w3.to_wei(minimum_gwei, 'gwei')
         try:
-            gas_price = w3.eth.gas_price
-            gas_price = int(max(gas_price * 1.2, w3.to_wei(3, 'gwei')))
+            rpc_gas_price = w3.eth.gas_price
+            gas_price = max(
+                int(Decimal(rpc_gas_price) * Decimal("1.2")),
+                minimum_gas_price,
+            )
         except Exception:
-            gas_price = w3.to_wei(3, 'gwei')
+            gas_price = minimum_gas_price
         return {'gasPrice': gas_price}
     try:
         # Try to get latest block to check if EIP-1559 is supported
