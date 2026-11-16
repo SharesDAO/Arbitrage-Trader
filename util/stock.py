@@ -1,6 +1,9 @@
 import json
 import requests
 from cachetools import TTLCache, cached
+from decimal import Decimal
+
+from util.stock_units import token_per_share
 
 from constants.constant import REQUEST_TIMEOUT, CONFIG
 
@@ -116,8 +119,16 @@ def get_stock_price_from_dao(symbol, logger):
 
         if response.status_code == 200:
             pool = response.json()
-            bp_price = f'{float(pool["buy_price"]) * (1 - CONFIG["SLIPPAGE"]):.2f}'
-            ap_price = f'{float(pool["sell_price"]) * (1 + CONFIG["SLIPPAGE"]) :.2f}'
+            chain = CONFIG["BLOCKCHAIN"].lower()
+            if chain == "evm":
+                chain = CONFIG["EVM_CHAIN"].lower()
+                chain = {"bsc": "bnb", "eth": "ethereum", "arb": "arbitrum"}.get(chain, chain)
+            conversion = token_per_share(pool, STOCKS[symbol]["asset_id"], chain)
+            slippage = Decimal(str(CONFIG["SLIPPAGE"]))
+            # Positions and order quantities are tokens, while API prices are per share.
+            bp_price = Decimal(str(pool["buy_price"])) * (1 - slippage) / conversion
+            ap_price = Decimal(str(pool["sell_price"])) * (1 + slippage) / conversion
+            STOCKS[symbol]["token_per_share"] = conversion
             return float(bp_price), float(ap_price)
         else:
             logger.error(f"Failed to get stock price for {symbol} {response.status_code} : {response.text}")
@@ -125,3 +136,7 @@ def get_stock_price_from_dao(symbol, logger):
     except Exception as e:
         logger.error(f"Failed to get stock price for {symbol}, {str(e)}")
         return 0, 0
+
+def get_token_per_share(symbol):
+    """Use the conversion captured with the current cached token price."""
+    return float(STOCKS[symbol]["token_per_share"])

@@ -27,3 +27,21 @@ For BSC or Arbitrum, set `EVM_PRIVATE_KEY` and the appropriate RPC URL, then run
 - `python3 main.py liquid -d <YOUR_DID_IN_HEX> -t <TICKER> -s Grid -b EVM -c arbitrum`
 
 EVM liquidation reads the live ERC-20 balance from the configured RPC and uses `USDC` as the order memo currency.
+
+
+### Stock token conversion
+
+Position `volume`, balances, and order quantities are token units. Grid
+`MIN_PRICE`/`MAX_PRICE` and API pool prices are USD per underlying share.
+The trader divides these prices by `token_per_share` before sizing orders
+or valuing positions; SOL prices are then used to convert USD to SOL.
+For example, 0.1 tokens at 0.5 tokens/share represent 0.2 shares. At
+$100/share and $100/SOL, a sell requests 0.2 SOL, not 0.1 SOL.
+
+Conversions refresh with pool prices (20-second cache). When version metadata
+is present, the selected chain and token address must have an activated
+conversion. Scaled UI conversions come from the detailed pool endpoint;
+missing or invalid conversions prevent quoting. Existing pending orders
+retain their submitted quantities and must be reviewed separately.
+
+Run isolated regression checks with `python -m unittest discover -s tests`.
