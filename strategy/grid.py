@@ -7,7 +7,7 @@ from constants.constant import PositionStatus, CONFIG, StrategyType
 
 from util.db import get_position, update_position, create_position, record_trade
 from util.sharesdao import get_fund_value, check_cash_reserve
-from util.stock import is_market_open, get_stock_price, STOCKS
+from util.stock import is_market_open, get_stock_price, get_token_per_share, STOCKS
 
 
 #For Grid trading, buy_count = arbitrage times, profit = agg gain
@@ -37,10 +37,18 @@ class GridStockTrader(StockTrader):
         else:
             create_position(self)
 
+    def grid_price(self, index):
+        # Configured grid levels are per share; balances and positions are tokens.
+        share_price = self.max_price / CONFIG["CRYPTO_MIN"] - index * self.grid_width
+        return share_price / get_token_per_share(self.ticker)
+
+    def grid_step(self):
+        return self.grid_width / get_token_per_share(self.ticker)
+
     def buy_stock(self, crypto_volume, crypto_price, stock_price):
-        buy_price = self.max_price / CONFIG["CRYPTO_MIN"] - (self.index+1) * self.grid_width
-        #while buy_price - self.grid_width > stock_price / crypto_price:
-        #    buy_price -= self.grid_width
+        buy_price = self.grid_price(self.index + 1)
+        #while buy_price - self.grid_step() > stock_price / crypto_price:
+        #    buy_price -= self.grid_step()
         volume = crypto_volume / buy_price
         timestamp = datetime.now()
         customer_id = trade(self.ticker, "BUY", volume, crypto_volume, self.logger, self.stock)
@@ -61,9 +69,9 @@ class GridStockTrader(StockTrader):
 
     def sell_stock(self, crypto_price, stock_price, liquid=False):
         self.current_price = stock_price
-        sell_price = self.max_price / CONFIG["CRYPTO_MIN"] - self.index * self.grid_width
-        #while sell_price + self.grid_width < stock_price / crypto_price:
-        #    sell_price += self.grid_width
+        sell_price = self.grid_price(self.index)
+        #while sell_price + self.grid_step() < stock_price / crypto_price:
+        #    sell_price += self.grid_step()
         if liquid:
             sell_price = stock_price / crypto_price
         request_crypto = self.volume * sell_price
@@ -143,10 +151,10 @@ def execute_grid(logger):
             stocks_stats[trader.ticker]["cost"] += trader.total_cost
             if trader.position_status == PositionStatus.TRADABLE.name:
                 try:
-                    if trader.max_price / CONFIG["CRYPTO_MIN"] - trader.index * trader.grid_width >= current_sell_price / crypto_price and trader.volume == 0 and check_cash_reserve(traders, fund_crypto, True, logger):
+                    if trader.grid_price(trader.index) >= current_sell_price / crypto_price and trader.volume == 0 and check_cash_reserve(traders, fund_crypto, True, logger):
                         trader.buy_stock(fund_crypto * trader.invested_crypto * (1 - CONFIG["RESERVE_RATIO"]) / trader.grid_num, crypto_price, current_sell_price)
                         time.sleep(3)
-                    elif trader.max_price / CONFIG["CRYPTO_MIN"] - (trader.index+1) * trader.grid_width < current_buy_price / crypto_price and trader.volume > 0 and current_buy_price / crypto_price > trader.avg_price:
+                    elif trader.grid_price(trader.index + 1) < current_buy_price / crypto_price and trader.volume > 0 and current_buy_price / crypto_price > trader.avg_price:
                         trader.sell_stock(crypto_price, current_buy_price)
                         time.sleep(3)
                 except Exception as e:

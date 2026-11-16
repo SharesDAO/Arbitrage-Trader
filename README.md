@@ -31,3 +31,21 @@ The command fetches the stock's live SPL-token balance through `SOLANA_RPC_URL`,
 
 # How to correct my positions
 Run: `python main.py reset -t <Stock Ticker(e.g. GOOGL)> -v <ACTUAL_VOLUME> -w <YOUR_CHIA_WALLET_FINGERPRINT> -s [DCA|Grid]`
+
+
+### Stock token conversion
+
+Position `volume`, balances, and order quantities are token units. Grid
+`MIN_PRICE`/`MAX_PRICE` and API pool prices are USD per underlying share.
+The trader divides these prices by `token_per_share` before sizing orders
+or valuing positions; SOL prices are then used to convert USD to SOL.
+For example, 0.1 tokens at 0.5 tokens/share represent 0.2 shares. At
+$100/share and $100/SOL, a sell requests 0.2 SOL, not 0.1 SOL.
+
+Conversions refresh with pool prices (20-second cache). When version metadata
+is present, the selected chain and token address must have an activated
+conversion. Scaled UI conversions come from the detailed pool endpoint;
+missing or invalid conversions prevent quoting. Existing pending orders
+retain their submitted quantities and must be reviewed separately.
+
+Run isolated regression checks with `python -m unittest discover -s tests`.
